@@ -19,7 +19,7 @@ class SwaggerController
     {
         // Serve the Swagger UI HTML page
         header('Content-Type: text/html');
-        echo file_get_contents(__DIR__ . '/../../public/swagger.html');
+        echo file_get_contents(__DIR__ . '/../public/swagger.html');
         exit;
     }
 
