@@ -1,0 +1,20 @@
+{
+  "name": "lento/lentoapi",
+  "description": "Ein leichtgewichtiges WebAPI-Framework für PHP.",
+  "type": "library",
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Lento Leisenfeld",
+      "email": "lento@leisenfeld.com"
+    }
+  ],
+  "autoload": {
+    "psr-4": {
+      "Lento\\": "src/"
+    }
+  },
+  "require": {
+    "php": ">=8.4"
+  }
+}
