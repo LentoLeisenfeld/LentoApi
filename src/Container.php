@@ -14,8 +14,26 @@ class Container {
             if (!isset(self::$services[$name])) {
                 throw new \Exception("Service '$name' not registered");
             }
-            self::$instances[$name] = self::$services[$name]();
+
+            $instance = self::$services[$name]();
+
+            // Handle #[Inject] properties
+            $ref = new \ReflectionClass($instance);
+            foreach ($ref->getProperties() as $property) {
+                $attributes = $property->getAttributes(\Lento\Attributes\Inject::class);
+                if (!empty($attributes)) {
+                    $dependencyClass = $property->getType()->getName();
+                    $dependency = self::get($dependencyClass);
+                    var_dump($dependency);
+                    $property->setAccessible(true);
+                    $property->setValue($instance, $dependency);
+                }
+            }
+
+            self::$instances[$name] = $instance;
         }
+
         return self::$instances[$name];
     }
+
 }
