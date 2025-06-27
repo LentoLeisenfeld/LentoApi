@@ -1,4 +1,4 @@
-name: Build
+name: PSR-4
 
 on:
   push:

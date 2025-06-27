@@ -1,5 +1,5 @@
 # LentoApi
 
-![Build](https://github.com/LentoLeisenfeld/LentoApi/actions/workflows/build.yml/badge.svg)
-![PSR-4](https://img.shields.io/badge/PSR--4-compliant-brightgreen)
+![Build](https://github.com/LentoLeisenfeld/LentoApi/actions/workflows/build.yaml/badge.svg)
+![PSR-4](https://github.com/LentoLeisenfeld/LentoApi/actions/workflows/psr-4.yaml/badge.svg)
 ![PHP Version](https://img.shields.io/badge/PHP-8.4-blue)
