@@ -35,7 +35,7 @@ jobs:
         run: composer validate --strict
 
       - name: Dump autoload with PSR-4 check
-        run: composer dump-autoload --optimize --strict
+        run: composer dump-autoload --optimize --strict-psr
 
       - name: Show final PHP version used
         run: |
