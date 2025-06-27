@@ -1,0 +1,42 @@
+name: Build and PSR-4 Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: PHP Build + Composer Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Read PHP version from composer.json
+        id: phpversion
+        run: |
+          PHP_VERSION=$(jq -r '.require.php' composer.json | sed 's/>=//')
+          echo "Using PHP version $PHP_VERSION"
+          echo "php=$PHP_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ steps.phpversion.outputs.php }}
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --no-progress --no-interaction
+
+      - name: Validate composer.json and autoload
+        run: composer validate --strict
+
+      - name: Dump autoload with PSR-4 check
+        run: composer dump-autoload --optimize --strict
+
+      - name: Show final PHP version used
+        run: |
+          echo "PHP version used: ${{ steps.phpversion.outputs.php }}"
