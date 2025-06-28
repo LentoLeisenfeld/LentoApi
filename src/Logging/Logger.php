@@ -2,7 +2,8 @@
 
 namespace Lento\Logging;
 
-use Lento\Logging\LoggerInterface;
+use Psr\Log\LoggerInterface;
+use Psr\Log\LogLevel;
 
 class Logger implements LoggerInterface
 {
@@ -19,19 +20,50 @@ class Logger implements LoggerInterface
         $this->loggers = $loggers;
     }
 
-    public function log(string $level, string $message): void
+    public function log($level, $message, array $context = []): void
     {
         foreach ($this->loggers as $logger) {
-            $logger->log($level, $message);
+            $logger->log($level, $message, $context);
         }
     }
 
-    public function emergency(string $message): void { $this->log('emergency', $message); }
-    public function alert(string $message): void     { $this->log('alert', $message); }
-    public function critical(string $message): void  { $this->log('critical', $message); }
-    public function error(string $message): void     { $this->log('error', $message); }
-    public function warning(string $message): void   { $this->log('warning', $message); }
-    public function notice(string $message): void    { $this->log('notice', $message); }
-    public function info(string $message): void      { $this->log('info', $message); }
-    public function debug(string $message): void     { $this->log('debug', $message); }
+    public function emergency($message, array $context = []): void
+    {
+        $this->log(LogLevel::EMERGENCY, $message, $context);
+    }
+
+    public function alert($message, array $context = []): void
+    {
+        $this->log(LogLevel::ALERT, $message, $context);
+    }
+
+    public function critical($message, array $context = []): void
+    {
+        $this->log(LogLevel::CRITICAL, $message, $context);
+    }
+
+    public function error($message, array $context = []): void
+    {
+        $this->log(LogLevel::ERROR, $message, $context);
+    }
+
+    public function warning($message, array $context = []): void
+    {
+        $this->log(LogLevel::WARNING, $message, $context);
+    }
+
+    public function notice($message, array $context = []): void
+    {
+        $this->log(LogLevel::NOTICE, $message, $context);
+    }
+
+    public function info($message, array $context = []): void
+    {
+        $this->log(LogLevel::INFO, $message, $context);
+    }
+
+    public function debug($message, array $context = []): void
+    {
+        $this->log(LogLevel::DEBUG, $message, $context);
+    }
 }

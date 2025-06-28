@@ -1,17 +1,21 @@
 <?php
 namespace Lento\Logging;
 
-use Lento\Logging\LoggerInterface;
+use Psr\Log\LoggerInterface;
+use Psr\Log\LogLevel as PsrLogLevel;
+use Lento\Logging\LogLevel;
 
 class StdoutLogger implements LoggerInterface
 {
     private $output;
+    private array $allowedLevels;
 
     public function __construct(array $options = [])
     {
         if (!defined('STDOUT')) {
             define('STDOUT', fopen('php://stdout', 'w'));
         }
+
         $this->output = STDOUT;
         $this->allowedLevels = array_map('strtolower', $options['levels'] ?? LogLevel::LEVELS);
     }
@@ -21,25 +25,34 @@ class StdoutLogger implements LoggerInterface
         return in_array(strtolower($level), $this->allowedLevels, true);
     }
 
-    private function write(string $level, string $message): void
+    private function interpolate(string $message, array $context): string
     {
-        $timestamp = (new \DateTime('now', new \DateTimeZone('Europe/Berlin')))->format('Y-m-d H:i:s');
-        fwrite($this->output, "[$timestamp] [$level] $message\n");
+        $replacements = [];
+        foreach ($context as $key => $value) {
+            $replacements["{{$key}}"] = is_scalar($value) ? $value : json_encode($value);
+        }
+        return strtr($message, $replacements);
     }
 
-    public function log(string $level, string $message): void
+    public function log($level, $message, array $context = []): void
     {
-        if (!$this->shouldLog($level)) return;
+        if (!$this->shouldLog($level)) {
+            return;
+        }
 
-        $this->write(strtoupper($level), $message);
+        $message = $this->interpolate($message, $context);
+        $timestamp = (new \DateTime('now', new \DateTimeZone('Europe/Berlin')))
+            ->format('Y-m-d H:i:s');
+
+        fwrite($this->output, "[$timestamp] [" . strtoupper($level) . "] $message\n");
     }
 
-    public function emergency(string $message): void { $this->log('emergency', $message); }
-    public function alert(string $message): void     { $this->log('alert', $message); }
-    public function critical(string $message): void  { $this->log('critical', $message); }
-    public function error(string $message): void     { $this->log('error', $message); }
-    public function warning(string $message): void   { $this->log('warning', $message); }
-    public function notice(string $message): void    { $this->log('notice', $message); }
-    public function info(string $message): void      { $this->log('info', $message); }
-    public function debug(string $message): void     { $this->log('debug', $message); }
+    public function emergency($message, array $context = []): void { $this->log(PsrLogLevel::EMERGENCY, $message, $context); }
+    public function alert($message, array $context = []): void     { $this->log(PsrLogLevel::ALERT, $message, $context); }
+    public function critical($message, array $context = []): void  { $this->log(PsrLogLevel::CRITICAL, $message, $context); }
+    public function error($message, array $context = []): void     { $this->log(PsrLogLevel::ERROR, $message, $context); }
+    public function warning($message, array $context = []): void   { $this->log(PsrLogLevel::WARNING, $message, $context); }
+    public function notice($message, array $context = []): void    { $this->log(PsrLogLevel::NOTICE, $message, $context); }
+    public function info($message, array $context = []): void      { $this->log(PsrLogLevel::INFO, $message, $context); }
+    public function debug($message, array $context = []): void     { $this->log(PsrLogLevel::DEBUG, $message, $context); }
 }
