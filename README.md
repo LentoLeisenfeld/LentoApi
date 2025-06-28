@@ -53,21 +53,14 @@ Here is an example usage that demonstrates routing, Illuminate Database ORM conf
 require __DIR__ . '/vendor/autoload.php';
 
 use Lento\LentoApi;
-use Illuminate\Database\Capsule\Manager as Capsule;
+use Lento\ORM;
 use Lento\Logging\{FileLogger, StdoutLogger, LogLevel};
 
 // Set timezone to ensure correct timestamps
 date_default_timezone_set('Europe/Berlin');
 
 // Configure Illuminate Database (Eloquent ORM)
-$capsule = new Capsule;
-$capsule->addConnection([
-    'driver' => 'sqlite',
-    'database' => __DIR__ . '/database.sqlite',
-    'prefix' => '',
-]);
-$capsule->setAsGlobal();
-$capsule->bootEloquent();
+ORM::configure('sqlite:./database.sqlite');
 
 // Register controllers
 $controllers = [
@@ -87,7 +80,7 @@ $api = new LentoApi($controllers, $services);
 // Enable logging with multiple loggers and custom log levels
 $api->enableLogging([
     new FileLogger([
-        'path' => "/media/coding/webapi_php/lento.log",
+        'path' => "./lento.log",
         'levels' => [
             LogLevel::ERROR,
             LogLevel::CRITICAL,
@@ -128,9 +121,6 @@ $api->start();
 ## ORM Integration
 
 LentoApi bundles **Illuminate Database** (Laravel’s Eloquent ORM) for powerful and expressive database access.
-
-Configure it by initializing the `Capsule\Manager` and setting up connections as shown above.
-
 You can then use Eloquent models and queries in your services and controllers.
 
 ---
