@@ -20,6 +20,7 @@ A lightweight, modular PHP API framework with built-in routing, **Illuminate Dat
 - Built-in CORS support
 - Middleware pipeline support
 - Swagger/OpenAPI integration
+- Simple dependency injection using `#[Service]` and `#[Inject]` attributes
 
 ---
 
@@ -118,14 +119,58 @@ $api->start();
 
 ---
 
+## Dependency Injection (DI) Services
+
+LentoApi provides a simple, annotation-based dependency injection system.
+
+Use `#[Service]` to mark your class as injectable, and `#[Inject]` to declare dependencies.
+
+Here’s an example of a service class that retrieves user data from the database and logs activity:
+
+```php
+<?php
+
+namespace App\Services;
+
+use Lento\Attributes\{Service, Inject};
+use Lento\Logging\Logger;
+use App\DTO\UserDTO;
+use App\Entities\User;
+
+#[Service]
+class UserService {
+
+    #[Inject]
+    private Logger $logger;
+
+    public function getUser(string $name): ?UserDto {
+        $user = User::where('name', $name)->first();
+        if ($user) {
+            return new UserDto(
+                ...$user->toArray()
+            );
+        }
+
+        $this->logger->error("user not found");
+        return null;
+    }
+}
+```
+
+### Notes:
+
+- Services are automatically instantiated and injected into controllers or other services.
+- You can register all services via the `$services` array passed to `LentoApi`.
+- Logging, configuration, or other core services provided by Lento can also be injected.
+
+---
+
 ## ORM Integration
 
 LentoApi bundles **Illuminate Database** (Laravel’s Eloquent ORM) for powerful and expressive database access.
 You can then use Eloquent models and queries in your services and controllers.
 
 ---
-
-*(The rest of the README remains the same)*
 
 
 ## Requirements
