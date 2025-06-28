@@ -24,7 +24,6 @@ class Container {
                 if (!empty($attributes)) {
                     $dependencyClass = $property->getType()->getName();
                     $dependency = self::get($dependencyClass);
-                    var_dump($dependency);
                     $property->setAccessible(true);
                     $property->setValue($instance, $dependency);
                 }

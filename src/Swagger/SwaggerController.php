@@ -1,6 +1,6 @@
 <?php
 
-namespace Lento\Controllers;
+namespace Lento\Swagger;
 
 use Lento\Attributes\Methods\{Get, Post};
 use Lento\Attributes\{Ignore, Inject};
@@ -19,7 +19,7 @@ class SwaggerController
     {
         // Serve the Swagger UI HTML page
         header('Content-Type: text/html');
-        echo file_get_contents(__DIR__ . '/../public/swagger.html');
+        echo file_get_contents(__DIR__ . '/swagger.html');
         exit;
     }
 

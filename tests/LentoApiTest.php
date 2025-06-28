@@ -16,7 +16,14 @@ class DummyController {
 
 class LentoApiTest extends TestCase {
     public function testLentoApiRegistersRoutes() {
+        $_SERVER['REQUEST_URI'] = '/hello/index';
+        $_SERVER['REQUEST_METHOD'] = 'GET';
+
         $api = new LentoApi(controllers: [DummyController::class]);
+
+        ob_start();
+        $api->start();
+        $output = ob_get_clean();
 
         $router = $api->getRouter();
         $routes = $router->getRoutes();

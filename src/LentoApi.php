@@ -2,8 +2,10 @@
 
 namespace Lento;
 
+use Lento\Container;
 use Lento\Router;
 use Lento\Attributes\{Controller, Inject, Ignore, Middleware};
+use Lento\Logging\Logger;
 
 class LentoApi {
     private Router $router;
@@ -16,12 +18,36 @@ class LentoApi {
         $this->middleware = new MiddlewareRunner();
         $this->controllers = $controllers;
         $this->services = $services;
+    }
 
+    public function enableLogging(array $logger): void {
+        Container::register(Logger::class, fn() => new Logger($logger));
+    }
 
+    private function registerGlobalErrorHandling() {
+        $this->use(function ($req, $res, $next) {
+            try {
+                return $next($req, $res);
+            } catch (\Throwable $e) {
+                http_response_code(500);
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'error' => 'Internal Server Error',
+                    'message' => 'Please try again later.' // or omit for silence
+                ]);
+
+                $logger = Container::get(Logger::class);
+                if ($logger) {
+                    $logger->error($e);
+                }
+
+                return null;
+            }
+        });
+    }
+
+    private function registerRouter() {
         Container::register(Router::class, fn() => $this->router);
-
-        $this->registerServices();
-        $this->loadControllers();
     }
 
     private function registerServices(): void {
@@ -90,6 +116,11 @@ class LentoApi {
     }
 
     public function start(): void {
+        $this->registerRouter();
+        $this->registerGlobalErrorHandling();
+        $this->registerServices();
+        $this->loadControllers();
+
         $request = (object) $_REQUEST;
         $request->router = $this->router;
 
@@ -103,40 +134,39 @@ class LentoApi {
     }
 
     private bool $corsEnabled = false;
-private array $corsConfig = [];
+    private array $corsConfig = [];
 
-public function useCors(array $config = []): void {
-    $this->corsEnabled = true;
+    public function useCors(array $config = []): void {
+        $this->corsEnabled = true;
 
-    // Defaults for CORS
-    $defaultConfig = [
-        'allowOrigin' => '*',
-        'allowMethods' => 'GET, POST, PUT, DELETE, OPTIONS',
-        'allowHeaders' => 'Content-Type, Authorization',
-        'allowCredentials' => false,
-        'maxAge' => 86400,
-    ];
+        // Defaults for CORS
+        $defaultConfig = [
+            'allowOrigin' => '*',
+            'allowMethods' => 'GET, POST, PUT, DELETE, OPTIONS',
+            'allowHeaders' => 'Content-Type, Authorization',
+            'allowCredentials' => false,
+            'maxAge' => 86400,
+        ];
 
-    $this->corsConfig = array_merge($defaultConfig, $config);
+        $this->corsConfig = array_merge($defaultConfig, $config);
 
-    // Register middleware that adds CORS headers
-    $this->use(function($req, $res, $next) {
-        header('Access-Control-Allow-Origin: ' . $this->corsConfig['allowOrigin']);
-        header('Access-Control-Allow-Methods: ' . $this->corsConfig['allowMethods']);
-        header('Access-Control-Allow-Headers: ' . $this->corsConfig['allowHeaders']);
-        if ($this->corsConfig['allowCredentials']) {
-            header('Access-Control-Allow-Credentials: true');
-        }
-        header('Access-Control-Max-Age: ' . $this->corsConfig['maxAge']);
+        // Register middleware that adds CORS headers
+        $this->use(function($req, $res, $next) {
+            header('Access-Control-Allow-Origin: ' . $this->corsConfig['allowOrigin']);
+            header('Access-Control-Allow-Methods: ' . $this->corsConfig['allowMethods']);
+            header('Access-Control-Allow-Headers: ' . $this->corsConfig['allowHeaders']);
+            if ($this->corsConfig['allowCredentials']) {
+                header('Access-Control-Allow-Credentials: true');
+            }
+            header('Access-Control-Max-Age: ' . $this->corsConfig['maxAge']);
 
-        // Handle OPTIONS preflight immediately
-        if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-            http_response_code(204);
-            exit;
-        }
+            // Handle OPTIONS preflight immediately
+            if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+                http_response_code(204);
+                exit;
+            }
 
-        return $next($req, $res);
-    });
-}
-
+            return $next($req, $res);
+        });
+    }
 }
