@@ -2,9 +2,10 @@
 
 namespace Lento;
 
+use Lento\Container;
 use Lento\Router;
 use Lento\Attributes\{Controller, Inject, Ignore, Middleware};
-use Lento\Services\LoggerService;
+use Lento\Logging\Logger;
 
 class LentoApi {
     private Router $router;
@@ -17,7 +18,10 @@ class LentoApi {
         $this->middleware = new MiddlewareRunner();
         $this->controllers = $controllers;
         $this->services = $services;
+    }
 
+    public function enableLogging(array $logger): void {
+        Container::register(Logger::class, fn() => new Logger($logger));
     }
 
     private function registerGlobalErrorHandling() {
@@ -25,8 +29,6 @@ class LentoApi {
             try {
                 return $next($req, $res);
             } catch (\Throwable $e) {
-                var_dump($e);
-
                 http_response_code(500);
                 header('Content-Type: application/json');
                 echo json_encode([
@@ -34,8 +36,11 @@ class LentoApi {
                     'message' => 'Please try again later.' // or omit for silence
                 ]);
 
-                // Optional: log the error
-                // echo((string)$e);
+                $logger = Container::get(Logger::class);
+                if ($logger) {
+                    $logger->error($e);
+                }
+
                 return null;
             }
         });
