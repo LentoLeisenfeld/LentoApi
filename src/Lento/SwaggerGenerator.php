@@ -5,6 +5,8 @@ use ReflectionClass;
 use ReflectionMethod;
 use ReflectionNamedType;
 use Lento\Attributes\{Ignore, Property, Param};
+use Lento\Routing\Router;
+use Lento\Routing\Route;
 
 class SwaggerGenerator {
     private Router $router;
@@ -25,10 +27,11 @@ class SwaggerGenerator {
             'paths' => [],
         ];
 
+        /** @var Route $route */
         foreach ($this->router->getRoutes() as $route) {
-            $method = $route->method ?? $route[0];
-            $path = $route->path ?? $route[1];
-            $handler = $route->handler ?? $route[2];
+            $method = strtolower($route->method);
+            $path = $route->path;
+            $handler = $route->handler;
 
             if (!is_array($handler) || count($handler) !== 2) continue;
 
@@ -37,11 +40,9 @@ class SwaggerGenerator {
             $refClass = new ReflectionClass($controller);
             $refMethod = $refClass->getMethod($methodName);
 
-            // Skip ignored classes/methods
             if (!empty($refClass->getAttributes(Ignore::class))) continue;
             if (!empty($refMethod->getAttributes(Ignore::class))) continue;
 
-            // Extract request input and register schemas
             [$parameters, $requestBody, $schemas] = $this->extractParameters($refMethod);
             foreach ($schemas as $name => $fqcn) {
                 if (!isset($this->processedModels[$name])) {
@@ -50,7 +51,6 @@ class SwaggerGenerator {
                 }
             }
 
-            // Return type
             $responseSchema = ['type' => 'object'];
             $returnType = $refMethod->getReturnType();
             if ($returnType instanceof ReflectionNamedType && !$returnType->isBuiltin()) {
@@ -64,7 +64,6 @@ class SwaggerGenerator {
                 }
             }
 
-            // Build path operation
             $operation = [
                 'parameters' => $parameters,
                 'responses' => [
@@ -83,7 +82,7 @@ class SwaggerGenerator {
                 $operation['requestBody'] = $requestBody;
             }
 
-            $swagger['paths'][$path][strtolower($method)] = $operation;
+            $swagger['paths'][$path][$method] = $operation;
         }
 
         $swagger['components'] = $this->components;
@@ -96,12 +95,10 @@ class SwaggerGenerator {
         $schemas = [];
 
         foreach ($method->getParameters() as $param) {
-            $paramAttrs = $param->getAttributes(Param::class);
-            if (empty($paramAttrs)) continue;
-
+            $hasParamAttr = !empty($param->getAttributes(Param::class));
             $paramType = $param->getType();
-            if (!$paramType instanceof ReflectionNamedType) continue;
 
+            if (!$paramType instanceof ReflectionNamedType) continue;
             $typeName = $paramType->getName();
 
             if (!$paramType->isBuiltin()) {
@@ -117,10 +114,9 @@ class SwaggerGenerator {
                     ],
                 ];
                 $schemas[$shortName] = $typeName;
-            } else {
-                $name = $param->getName();
+            } elseif ($hasParamAttr) {
                 $params[] = [
-                    'name' => $name,
+                    'name' => $param->getName(),
                     'in' => 'path',
                     'required' => true,
                     'schema' => [
@@ -134,7 +130,6 @@ class SwaggerGenerator {
     }
 
     private function generateModelSchema(string $fqcn): array {
-        // Skip primitives
         if (in_array($fqcn, ['int', 'float', 'bool', 'string', 'array', 'mixed'])) {
             return ['type' => $this->mapType($fqcn)];
         }
@@ -152,10 +147,9 @@ class SwaggerGenerator {
 
             $propName = $prop->getName();
             $typeObj = $prop->getType();
-
             if (!$typeObj instanceof ReflectionNamedType) continue;
-            $typeName = $typeObj->getName();
 
+            $typeName = $typeObj->getName();
             if ($typeObj->isBuiltin()) {
                 $schema['properties'][$propName] = [
                     'type' => $this->mapType($typeName),

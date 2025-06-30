@@ -4,7 +4,8 @@ namespace Lento\Swagger;
 
 use Lento\Attributes\Methods\{Get, Post};
 use Lento\Attributes\{Ignore, Inject};
-use Lento\{SwaggerGenerator, Router};
+use Lento\{SwaggerGenerator};
+use Lento\Routing\Router;
 
 
 #[Ignore]
@@ -14,6 +15,10 @@ class SwaggerController
     #[Inject]
     private Router $router;
 
+
+public function __construct() {
+    $this->router = \Lento\Container::get(Router::class);
+}
     #[Get('/apidocs')]
     public function index()
     {

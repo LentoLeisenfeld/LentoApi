@@ -3,7 +3,8 @@
 namespace Lento;
 
 use Lento\Container;
-use Lento\Router;
+use Lento\Routing\Router;
+use Lento\Exceptions\NotFoundException;
 use Lento\Attributes\{Controller, Inject, Ignore, Middleware};
 use Lento\Logging\Logger;
 
@@ -24,22 +25,30 @@ class LentoApi {
         Container::register(Logger::class, fn() => new Logger($logger));
     }
 
+    private function registerControllers(): void {
+        foreach ($this->controllers as $controllerClass) {
+            Container::register($controllerClass, fn() => new $controllerClass());
+        }
+    }
+
     private function registerGlobalErrorHandling() {
         $this->use(function ($req, $res, $next) {
             try {
                 return $next($req, $res);
+            } catch (NotFoundException $e) {
+                http_response_code(404);
+                header('Content-Type: application/json');
+                echo json_encode(['error' => 'Not Found', 'message' => $e->getMessage()]);
+                return null;
             } catch (\Throwable $e) {
                 http_response_code(500);
                 header('Content-Type: application/json');
                 echo json_encode([
                     'error' => 'Internal Server Error',
-                    'message' => 'Please try again later.' // or omit for silence
+                    'message' => 'Please try again later.'
                 ]);
 
-                $logger = Container::get(Logger::class);
-                if ($logger) {
-                    $logger->error($e);
-                }
+                Container::get(Logger::class)->error($e);
 
                 return null;
             }
@@ -119,7 +128,12 @@ class LentoApi {
         $this->registerRouter();
         $this->registerGlobalErrorHandling();
         $this->registerServices();
-        $this->loadControllers();
+        $this->registerControllers();
+
+        if (!$this->router->loadCachedRoutes($this->controllers)) {
+            $this->loadControllers();
+            $this->router->cacheRoutes($this->controllers);
+        }
 
         $request = (object) $_REQUEST;
         $request->router = $this->router;

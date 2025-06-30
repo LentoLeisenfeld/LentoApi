@@ -2,7 +2,7 @@
 
 use PHPUnit\Framework\TestCase;
 use Lento\LentoApi;
-use Lento\Router;
+use Lento\Routing\Router;
 use Lento\Attributes\Controller;
 use Lento\Attributes\Methods\Get;
 
