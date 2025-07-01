@@ -1,16 +1,16 @@
 <?php
+
 namespace Lento\Services;
 
 class LoggerService
 {
-
-
 /*if (!defined('STDOUT')) {
     define('STDOUT', fopen('php://stdout', 'w'));
 }*/
     private string $logFile;
 
-    public function __construct(string $logFile) {
+    public function __construct(string $logFile)
+    {
         $this->logFile = $logFile;
 
         // Ensure log directory exists
@@ -30,19 +30,23 @@ class LoggerService
         }
     }
 
-    public function info(string $message): void {
+    public function info(string $message): void
+    {
         $this->writeLog('INFO', $message);
     }
 
-    public function warning(string $message): void {
+    public function warning(string $message): void
+    {
         $this->writeLog('WARNING', $message);
     }
 
-    public function error(string $message): void {
+    public function error(string $message): void
+    {
         $this->writeLog('ERROR', $message);
     }
 
-    private function writeLog(string $level, string $message): void {
+    private function writeLog(string $level, string $message): void
+    {
         $timestamp = date('Y-m-d H:i:s');
         $entry = "[$timestamp] [$level] $message\n";
         file_put_contents($this->logFile, $entry, FILE_APPEND);

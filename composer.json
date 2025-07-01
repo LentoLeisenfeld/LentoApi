@@ -18,6 +18,11 @@
       "email": "lento@leisenfeld.com"
     }
   ],
+  "scripts": {
+    "start:lint": "phpcs --standard=PSR12 src",
+    "start:lint:fix": "phpcbf --standard=PSR12 src",
+    "start:test": ""
+  },
   "autoload": {
     "psr-4": {
       "Lento\\": "src/Lento/"
@@ -29,7 +34,8 @@
     "psr/log": "^3.0"
   },
   "require-dev": {
-    "phpunit/phpunit": "^10"
+    "phpunit/phpunit": "^10",
+    "squizlabs/php_codesniffer": "^3.13"
   },
   "minimum-stability": "stable",
   "prefer-stable": true

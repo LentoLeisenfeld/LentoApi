@@ -2,7 +2,8 @@
 
 namespace Lento\Swagger;
 
-class SwaggerOptions {
+class SwaggerOptions
+{
     public string $title = 'API Documentation';
     public string $version = '1.0.0';
     public string $description = 'Generated API documentation';
@@ -12,7 +13,8 @@ class SwaggerOptions {
     public array $tags = [];
     public array $security = [];
 
-    public function __construct(array $options = []) {
+    public function __construct(array $options = [])
+    {
         foreach ($options as $key => $value) {
             if (property_exists($this, $key)) {
                 $this->$key = $value;
@@ -20,7 +22,8 @@ class SwaggerOptions {
         }
     }
 
-    public function toArray(): array {
+    public function toArray(): array
+    {
         return [
             'title' => $this->title,
             'version' => $this->version,

@@ -1,17 +1,21 @@
 <?php
+
 namespace Lento;
 
-use \Lento\Attributes\Inject;
+use Lento\Attributes\Inject;
 
-class Container {
-    private static $services = [];
-    private static $instances = [];
+class Container
+{
+    public static $services = [];
+    public static $instances = [];
 
-    public static function register(string $name, callable $factory) {
+    public static function register(string $name, callable $factory)
+    {
         self::$services[$name] = $factory;
     }
 
-    public static function get(string $name) {
+    public static function get(string $name)
+    {
         if (!isset(self::$instances[$name])) {
             if (!isset(self::$services[$name])) {
                 throw new \Exception("Service '$name' not registered");
@@ -36,5 +40,4 @@ class Container {
 
         return self::$instances[$name];
     }
-
 }

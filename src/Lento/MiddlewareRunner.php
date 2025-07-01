@@ -2,14 +2,17 @@
 
 namespace Lento;
 
-class MiddlewareRunner {
+class MiddlewareRunner
+{
     private array $global = [];
 
-    public function use(callable $middleware): void {
+    public function use(callable $middleware): void
+    {
         $this->global[] = $middleware;
     }
 
-    public function handle($request, $response, callable $next): void {
+    public function handle($request, $response, callable $next): void
+    {
         $stack = array_reverse($this->global);
 
         $runner = array_reduce(
@@ -20,5 +23,4 @@ class MiddlewareRunner {
 
         $runner();
     }
-    
 }

@@ -28,21 +28,33 @@ final class Env
     private static function parseFile(string $file): void
     {
         $handle = @fopen($file, 'r');
-        if (!$handle) return;
+        if (!$handle) {
+            return;
+        }
 
         while (($line = fgets($handle)) !== false) {
             $line = trim($line);
-            if ($line === '' || $line[0] === '#') continue;
+            if ($line === '' || $line[0] === '#') {
+                continue;
+            }
 
             $equals = strpos($line, '=');
-            if ($equals === false) continue;
+            if ($equals === false) {
+                continue;
+            }
 
             $key = trim(substr($line, 0, $equals));
             $val = trim(substr($line, $equals + 1), " \t\n\r\0\x0B\"'");
 
-            if (!isset($_ENV[$key])) $_ENV[$key] = $val;
-            if (!isset($_SERVER[$key])) $_SERVER[$key] = $val;
-            if (getenv($key) === false) putenv("$key=$val");
+            if (!isset($_ENV[$key])) {
+                $_ENV[$key] = $val;
+            }
+            if (!isset($_SERVER[$key])) {
+                $_SERVER[$key] = $val;
+            }
+            if (getenv($key) === false) {
+                putenv("$key=$val");
+            }
         }
 
         fclose($handle);
@@ -52,7 +64,9 @@ final class Env
     {
         static $result;
 
-        if ($result !== null) return $result;
+        if ($result !== null) {
+            return $result;
+        }
 
         if (php_sapi_name() === 'cli' || php_sapi_name() === 'cli-server') {
             return $result = 'development';

@@ -1,4 +1,5 @@
 <?php
+
 namespace Lento\Swagger;
 
 use ReflectionClass;
@@ -8,16 +9,19 @@ use Lento\Attributes\{Ignore, Property, Param};
 use Lento\Routing\Router;
 use Lento\Swagger;
 
-class SwaggerGenerator {
+class SwaggerGenerator
+{
     private Router $router;
     private array $processedModels = [];
     private array $components = ['schemas' => []];
 
-    public function __construct(Router $router) {
+    public function __construct(Router $router)
+    {
         $this->router = $router;
     }
 
-    public function generate(): array {
+    public function generate(): array
+    {
         return [
             'openapi' => '3.0.0',
             'info' => Swagger::getInfo(),
@@ -26,18 +30,23 @@ class SwaggerGenerator {
         ];
     }
 
-    protected function buildPaths(): array {
+    protected function buildPaths(): array
+    {
         $paths = [];
 
         foreach ($this->router->getRoutes() as $route) {
-            if (!is_array($route->handler) || count($route->handler) !== 2) continue;
+            if (!is_array($route->handler) || count($route->handler) !== 2) {
+                continue;
+            }
 
             [$controller, $methodName] = $route->handler;
 
             $refClass = new ReflectionClass($controller);
             $refMethod = $refClass->getMethod($methodName);
 
-            if ($this->isIgnored($refClass, $refMethod)) continue;
+            if ($this->isIgnored($refClass, $refMethod)) {
+                continue;
+            }
 
             $method = strtolower($route->method);
             $path = $route->path;
@@ -48,11 +57,13 @@ class SwaggerGenerator {
         return $paths;
     }
 
-    protected function isIgnored(ReflectionClass $refClass, ReflectionMethod $refMethod): bool {
+    protected function isIgnored(ReflectionClass $refClass, ReflectionMethod $refMethod): bool
+    {
         return !empty($refClass->getAttributes(Ignore::class)) || !empty($refMethod->getAttributes(Ignore::class));
     }
 
-    protected function buildOperation(ReflectionMethod $method): array {
+    protected function buildOperation(ReflectionMethod $method): array
+    {
         [$parameters, $requestBody, $schemas] = $this->extractParameters($method);
 
         foreach ($schemas as $name => $fqcn) {
@@ -86,7 +97,8 @@ class SwaggerGenerator {
         return $operation;
     }
 
-    protected function getResponseSchema(ReflectionMethod $method): array {
+    protected function getResponseSchema(ReflectionMethod $method): array
+    {
         $returnType = $method->getReturnType();
 
         if ($returnType instanceof ReflectionNamedType && !$returnType->isBuiltin()) {
@@ -104,7 +116,8 @@ class SwaggerGenerator {
         return ['type' => 'object'];
     }
 
-    protected function extractParameters(ReflectionMethod $method): array {
+    protected function extractParameters(ReflectionMethod $method): array
+    {
         $params = [];
         $requestBody = null;
         $schemas = [];
@@ -113,7 +126,9 @@ class SwaggerGenerator {
             $hasParamAttr = !empty($param->getAttributes(Param::class));
             $paramType = $param->getType();
 
-            if (!$paramType instanceof ReflectionNamedType) continue;
+            if (!$paramType instanceof ReflectionNamedType) {
+                continue;
+            }
 
             $typeName = $paramType->getName();
 
@@ -144,7 +159,8 @@ class SwaggerGenerator {
         return [$params, $requestBody, $schemas];
     }
 
-    protected function generateModelSchema(string $fqcn): array {
+    protected function generateModelSchema(string $fqcn): array
+    {
         $rc = new ReflectionClass($fqcn);
 
         $schema = [
@@ -154,12 +170,16 @@ class SwaggerGenerator {
         ];
 
         foreach ($rc->getProperties() as $prop) {
-            if (!$prop->isPublic() || empty($prop->getAttributes(Property::class))) continue;
+            if (!$prop->isPublic() || empty($prop->getAttributes(Property::class))) {
+                continue;
+            }
 
             $name = $prop->getName();
             $type = $prop->getType();
 
-            if (!$type instanceof ReflectionNamedType) continue;
+            if (!$type instanceof ReflectionNamedType) {
+                continue;
+            }
             $typeName = $type->getName();
 
             if ($type->isBuiltin()) {
@@ -180,7 +200,8 @@ class SwaggerGenerator {
         return $schema;
     }
 
-    protected function mapType(string $phpType): string {
+    protected function mapType(string $phpType): string
+    {
         return match ($phpType) {
             'int' => 'integer',
             'float', 'double' => 'number',

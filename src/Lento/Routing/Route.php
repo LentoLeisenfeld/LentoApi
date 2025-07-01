@@ -1,4 +1,5 @@
 <?php
+
 namespace Lento\Routing;
 
 class Route
