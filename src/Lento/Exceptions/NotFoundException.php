@@ -1,4 +1,5 @@
 <?php
+
 namespace Lento\Exceptions;
 
 use Exception;

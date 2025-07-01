@@ -6,22 +6,34 @@ use Lento\Attributes\Param;
 use ReflectionClass;
 use ReflectionMethod;
 
-class Router {
+class Router
+{
     private array $routes = [];
 
-    public function addRoute(string $method, string $path, callable $handler, array $middleware = [], ?string $name = null): void {
+    public function addRoute(
+        string $method,
+        string $path,
+        callable $handler,
+        array $middleware = [],
+        ?string $name = null
+    ): void {
         $this->routes[] = new Route($method, $path, $handler, $middleware, $name);
     }
 
-    public function dispatch($request, $response): void {
+    public function dispatch($request, $response): void
+    {
         $uri = rtrim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/') ?: '/';
         $httpMethod = $_SERVER['REQUEST_METHOD'];
 
         foreach ($this->routes as $route) {
-            if (strtoupper($route->method) !== $httpMethod) continue;
+            if (strtoupper($route->method) !== $httpMethod) {
+                continue;
+            }
 
             [$matched, $vars] = $this->matchPath($route->path, $uri);
-            if (!$matched) continue;
+            if (!$matched) {
+                continue;
+            }
 
             $handler = $route->handler;
 
@@ -55,7 +67,6 @@ class Router {
             // === Handle Closure or other callable ===
             } elseif (is_callable($handler)) {
                 $result = $handler($request, $response);
-
             } else {
                 throw new \Exception("Invalid route handler: must be [Class, 'method'] or Closure.");
             }
@@ -74,7 +85,13 @@ class Router {
     }
 
 
-    private function resolveParams(ReflectionMethod $refMethod, $request, $response, array $vars, array $inputData): array {
+    private function resolveParams(
+        ReflectionMethod $refMethod,
+        $request,
+        $response,
+        array $vars,
+        array $inputData
+    ): array {
         $params = [];
 
         foreach ($refMethod->getParameters() as $param) {
@@ -110,7 +127,8 @@ class Router {
         return $params;
     }
 
-    private function matchPath(string $routePath, string $uri): array {
+    private function matchPath(string $routePath, string $uri): array
+    {
         $pattern = preg_replace('#\{(\w+)\}#', '(?P<$1>[^/]+)', $routePath);
         $pattern = '#^' . rtrim($pattern, '/') . '$#';
 
@@ -122,11 +140,13 @@ class Router {
         return [false, []];
     }
 
-    public function getRoutes(): array {
+    public function getRoutes(): array
+    {
         return $this->routes;
     }
 
-    public function generateUrl(string $name, array $params = []): ?string {
+    public function generateUrl(string $name, array $params = []): ?string
+    {
         foreach ($this->routes as $route) {
             if ($route->name === $name) {
                 $path = $route->path;
@@ -139,7 +159,8 @@ class Router {
         return null;
     }
 
-    public function loadCachedRoutes(array $controllers): bool {
+    public function loadCachedRoutes(array $controllers): bool
+    {
         if (RouteCache::isAvailable($controllers)) {
             $routeData = RouteCache::load();
             $this->routes = array_map(function ($routeArr) {
@@ -150,7 +171,8 @@ class Router {
         return false;
     }
 
-    public function cacheRoutes(array $controllers): void {
+    public function cacheRoutes(array $controllers): void
+    {
         RouteCache::store($this->routes, $controllers);
     }
 }

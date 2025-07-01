@@ -10,26 +10,30 @@ use Lento\Logging\Logger;
 use Lento\Swagger\{SwaggerController};
 use Lento\Swagger;
 
-class LentoApi {
+class LentoApi
+{
     private Router $router;
     private MiddlewareRunner $middleware;
     private array $controllers;
     private array $services;
 
-    public function __construct(array $controllers = [], array $services = []) {
+    public function __construct(array $controllers = [], array $services = [])
+    {
         $this->router = new Router();
         $this->middleware = new MiddlewareRunner();
         $this->controllers = $controllers;
         $this->services = $services;
     }
 
-    public function enableLogging(array $logger): void {
+    public function enableLogging(array $logger): void
+    {
         Container::register(Logger::class, fn() => new Logger($logger));
     }
 
-    private function registerControllers(): void {
+    private function registerControllers(): void
+    {
         if (Swagger::isEnabled()) {
-            Container::register(SwaggerController::class, fn() => new SwaggerController());
+            $this->controllers[] = SwaggerController::class;
         }
 
         foreach ($this->controllers as $controllerClass) {
@@ -37,7 +41,8 @@ class LentoApi {
         }
     }
 
-    private function registerGlobalErrorHandling() {
+    private function registerGlobalErrorHandling()
+    {
         $this->use(function ($req, $res, $next) {
             try {
                 return $next($req, $res);
@@ -61,23 +66,27 @@ class LentoApi {
         });
     }
 
-    private function registerRouter() {
+    private function registerRouter()
+    {
         Container::register(Router::class, fn() => $this->router);
     }
 
-    private function registerServices(): void {
+    private function registerServices(): void
+    {
         foreach ($this->services as $serviceClass) {
             Container::register($serviceClass, fn() => new $serviceClass());
         }
     }
 
-    private function loadControllers(): void {
+    private function loadControllers(): void
+    {
         foreach ($this->controllers as $controllerClass) {
             $this->loadController($controllerClass);
         }
     }
 
-    public function loadController(string $classname): void {
+    public function loadController(string $classname): void
+    {
         $rc = new \ReflectionClass($classname);
         $attr = $rc->getAttributes(Controller::class)[0] ?? null;
         $base = $attr ? $attr->getArguments()[0] : '';
@@ -126,11 +135,13 @@ class LentoApi {
         }
     }
 
-    public function use(callable $middleware): void {
+    public function use(callable $middleware): void
+    {
         $this->middleware->use($middleware);
     }
 
-    public function start(): void {
+    public function start(): void
+    {
         $this->registerRouter();
         $this->registerGlobalErrorHandling();
         $this->registerServices();
@@ -149,14 +160,16 @@ class LentoApi {
         $this->middleware->handle($request, $response, fn() => $this->router->dispatch($request, $response));
     }
 
-    public function getRouter(): Router {
+    public function getRouter(): Router
+    {
         return $this->router;
     }
 
     private bool $corsEnabled = false;
     private array $corsConfig = [];
 
-    public function useCors(array $config = []): void {
+    public function useCors(array $config = []): void
+    {
         $this->corsEnabled = true;
 
         // Defaults for CORS
@@ -171,7 +184,7 @@ class LentoApi {
         $this->corsConfig = array_merge($defaultConfig, $config);
 
         // Register middleware that adds CORS headers
-        $this->use(function($req, $res, $next) {
+        $this->use(function ($req, $res, $next) {
             header('Access-Control-Allow-Origin: ' . $this->corsConfig['allowOrigin']);
             header('Access-Control-Allow-Methods: ' . $this->corsConfig['allowMethods']);
             header('Access-Control-Allow-Headers: ' . $this->corsConfig['allowHeaders']);

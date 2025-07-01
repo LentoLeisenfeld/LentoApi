@@ -3,23 +3,22 @@
 namespace Lento\Swagger;
 
 use Lento\Attributes\Methods\{Get, Post};
-use Lento\Attributes\{Ignore, Inject};
+use Lento\Attributes\{Ignore, Inject, Controller};
 use Lento\Swagger\{SwaggerGenerator};
 use Lento\Routing\Router;
 
-
-#[Ignore]
-#[Controller]
+#[Controller('/swagger')]
 class SwaggerController
 {
     #[Inject]
     private Router $router;
 
 
-public function __construct() {
-    $this->router = \Lento\Container::get(Router::class);
-}
-    #[Get('/apidocs')]
+    public function __construct()
+    {
+        $this->router = \Lento\Container::get(Router::class);
+    }
+    #[Get('/docs')]
     public function index()
     {
         // Serve the Swagger UI HTML page

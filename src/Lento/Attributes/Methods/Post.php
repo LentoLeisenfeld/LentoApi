@@ -5,6 +5,9 @@ namespace Lento\Attributes\Methods;
 use Attribute;
 
 #[Attribute(Attribute::TARGET_METHOD)]
-class Post {
-    public function __construct(public string $path) {}
+class Post
+{
+    public function __construct(public string $path)
+    {
+    }
 }

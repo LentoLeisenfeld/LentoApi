@@ -18,11 +18,15 @@ class RouteCache
 
         $storedMeta = require self::META_FILE;
         foreach ($controllers as $controller) {
-            if (!class_exists($controller)) continue;
+            if (!class_exists($controller)) {
+                continue;
+            }
 
             $ref = new \ReflectionClass($controller);
             $file = $ref->getFileName();
-            if (!file_exists($file)) return false;
+            if (!file_exists($file)) {
+                return false;
+            }
 
             $currentMTime = filemtime($file);
             if (!isset($storedMeta[$file]) || $storedMeta[$file] !== $currentMTime) {

@@ -63,12 +63,36 @@ class FileLogger implements LoggerInterface
         file_put_contents($this->logFile, $entry, FILE_APPEND);
     }
 
-    public function emergency($message, array $context = []): void { $this->log(PsrLogLevel::EMERGENCY, $message, $context); }
-    public function alert($message, array $context = []): void     { $this->log(PsrLogLevel::ALERT, $message, $context); }
-    public function critical($message, array $context = []): void  { $this->log(PsrLogLevel::CRITICAL, $message, $context); }
-    public function error($message, array $context = []): void     { $this->log(PsrLogLevel::ERROR, $message, $context); }
-    public function warning($message, array $context = []): void   { $this->log(PsrLogLevel::WARNING, $message, $context); }
-    public function notice($message, array $context = []): void    { $this->log(PsrLogLevel::NOTICE, $message, $context); }
-    public function info($message, array $context = []): void      { $this->log(PsrLogLevel::INFO, $message, $context); }
-    public function debug($message, array $context = []): void     { $this->log(PsrLogLevel::DEBUG, $message, $context); }
+    public function emergency($message, array $context = []): void
+    {
+        $this->log(PsrLogLevel::EMERGENCY, $message, $context);
+    }
+    public function alert($message, array $context = []): void
+    {
+        $this->log(PsrLogLevel::ALERT, $message, $context);
+    }
+    public function critical($message, array $context = []): void
+    {
+        $this->log(PsrLogLevel::CRITICAL, $message, $context);
+    }
+    public function error($message, array $context = []): void
+    {
+        $this->log(PsrLogLevel::ERROR, $message, $context);
+    }
+    public function warning($message, array $context = []): void
+    {
+        $this->log(PsrLogLevel::WARNING, $message, $context);
+    }
+    public function notice($message, array $context = []): void
+    {
+        $this->log(PsrLogLevel::NOTICE, $message, $context);
+    }
+    public function info($message, array $context = []): void
+    {
+        $this->log(PsrLogLevel::INFO, $message, $context);
+    }
+    public function debug($message, array $context = []): void
+    {
+        $this->log(PsrLogLevel::DEBUG, $message, $context);
+    }
 }

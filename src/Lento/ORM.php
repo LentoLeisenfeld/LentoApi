@@ -8,7 +8,7 @@ final class ORM
 {
     public static function configure(string $dsn): void
     {
-        $capsule = new Capsule;
+        $capsule = new Capsule();
 
         $config = match (true) {
             str_starts_with($dsn, 'sqlite:') => [

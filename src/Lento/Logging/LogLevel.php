@@ -1,4 +1,5 @@
 <?php
+
 namespace Lento\Logging;
 
 class LogLevel
