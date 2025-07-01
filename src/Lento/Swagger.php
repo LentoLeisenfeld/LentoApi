@@ -28,11 +28,16 @@ final class Swagger
 
     public static function getInfo(): array
     {
-        return self::$options->toArray();
+        return self::$options->toArray()['info'];
     }
 
     public static function getOptions(): SwaggerOptions
     {
         return self::$options;
+    }
+
+    public static function getExternalDocs(): ?array
+    {
+        return self::$options->toArray()['externalDocs'];
     }
 }

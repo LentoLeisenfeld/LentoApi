@@ -3,176 +3,202 @@
 namespace Lento\Routing;
 
 use Lento\Attributes\Param;
+use Lento\Attributes\Service;
+use Lento\Http\{Request, Response};
 use ReflectionClass;
 use ReflectionMethod;
 
+/**
+ * High-performance HTTP router with optimized caching via generated PHP code.
+ */
+#[Service()]
 class Router
 {
-    private array $routes = [];
+    private array $staticRoutes = [];
+    private array $dynamicRoutes = [];
 
-    public function addRoute(
-        string $method,
-        string $path,
-        callable $handler,
-        array $middleware = [],
-        ?string $name = null
-    ): void {
-        $this->routes[] = new Route($method, $path, $handler, $middleware, $name);
+    /**
+     * Add a route with a handler spec (callable or [Class, method] array).
+     */
+    public function addRoute(string $method, string $path, $handlerSpec): void
+    {
+        $route = new Route($method, $path, $handlerSpec);
+        $m = $route->method;
+        if (strpos($route->rawPath, '{') === false) {
+            $this->staticRoutes[$m][$route->rawPath] = $route;
+        } else {
+            $this->dynamicRoutes[$m][] = $route;
+        }
     }
 
-    public function dispatch($request, $response): void
+    /**
+     * Dispatch the request to the matching route.
+     */
+    public function dispatch(string $uri, string $httpMethod, Request $req, Response $res)
     {
-        $uri = rtrim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/') ?: '/';
-        $httpMethod = $_SERVER['REQUEST_METHOD'];
+        $uri = rtrim($uri, '/');
+        $m = strtoupper($httpMethod);
 
-        foreach ($this->routes as $route) {
-            if (strtoupper($route->method) !== $httpMethod) {
-                continue;
-            }
-
-            [$matched, $vars] = $this->matchPath($route->path, $uri);
-            if (!$matched) {
-                continue;
-            }
-
-            $handler = $route->handler;
-
-            // Apply middleware
-            foreach ($route->middleware as $mw) {
-                if (!is_callable($mw)) {
-                    throw new \Exception("Route middleware is not callable");
-                }
-                if ($mw($request, $response) === false) {
-                    return;
-                }
-            }
-
-            $inputData = in_array($httpMethod, ['POST', 'PUT'])
-                ? json_decode(file_get_contents('php://input'), true) ?? []
-                : [];
-
-            // === Handle [Controller::class, 'method'] ===
-            if (is_array($handler) && count($handler) === 2 && is_string($handler[1])) {
-                [$controllerOrClass, $methodName] = $handler;
-
-                $controllerInstance = is_string($controllerOrClass)
-                    ? \Lento\Container::get($controllerOrClass)
-                    : $controllerOrClass;
-
-                $refMethod = new ReflectionMethod($controllerInstance, $methodName);
-                $params = $this->resolveParams($refMethod, $request, $response, $vars, $inputData);
-
-                $result = call_user_func_array([$controllerInstance, $methodName], $params);
-
-            // === Handle Closure or other callable ===
-            } elseif (is_callable($handler)) {
-                $result = $handler($request, $response);
-            } else {
-                throw new \Exception("Invalid route handler: must be [Class, 'method'] or Closure.");
-            }
-
-            $response = json_encode($result);
-            header('Content-Length: ' . strlen($response));
-            header('Connection: keep-alive');
-            header('Content-Type: application/json');
-            http_response_code(200);
-            echo $response;
-            return;
+        // Static routes
+        if (isset($this->staticRoutes[$m][$uri])) {
+            return $this->invokeHandler($this->staticRoutes[$m][$uri], [], $req, $res);
         }
 
-        http_response_code(404);
-        echo json_encode(['error' => 'Not Found']);
-    }
-
-
-    private function resolveParams(
-        ReflectionMethod $refMethod,
-        $request,
-        $response,
-        array $vars,
-        array $inputData
-    ): array {
-        $params = [];
-
-        foreach ($refMethod->getParameters() as $param) {
-            $name = $param->getName();
-            $type = $param->getType();
-            $paramAttr = $param->getAttributes(Param::class)[0] ?? null;
-
-            if ($name === 'req') {
-                $params[] = $request;
-            } elseif ($name === 'res') {
-                $params[] = $response;
-            } elseif ($paramAttr && $type && !$type->isBuiltin()) {
-                $dto = new ($type->getName())();
-                $refDto = new ReflectionClass($dto);
-
-                foreach ($refDto->getProperties() as $prop) {
-                    $propName = $prop->getName();
-                    $value = $inputData[$propName] ?? $_GET[$propName] ?? $vars[$propName] ?? null;
-
-                    if ($value !== null) {
-                        $prop->setAccessible(true);
-                        $prop->setValue($dto, $value);
-                    }
+        // Dynamic routes
+        foreach ($this->dynamicRoutes[$m] ?? [] as $route) {
+            if (preg_match($route->regex, $uri, $matches)) {
+                $params = [];
+                foreach ($route->paramNames as $i => $name) {
+                    $params[$name] = $matches[$i + 1] ?? null;
                 }
-                $params[] = $dto;
-            } elseif (isset($vars[$name])) {
-                $params[] = $vars[$name];
-            } else {
-                $params[] = null;
+                return $this->invokeHandler($route, $params, $req, $res);
             }
         }
 
-        return $params;
-    }
-
-    private function matchPath(string $routePath, string $uri): array
-    {
-        $pattern = preg_replace('#\{(\w+)\}#', '(?P<$1>[^/]+)', $routePath);
-        $pattern = '#^' . rtrim($pattern, '/') . '$#';
-
-        if (preg_match($pattern, $uri, $matches)) {
-            $params = array_filter($matches, fn($k) => is_string($k), ARRAY_FILTER_USE_KEY);
-            return [true, $params];
-        }
-
-        return [false, []];
-    }
-
-    public function getRoutes(): array
-    {
-        return $this->routes;
-    }
-
-    public function generateUrl(string $name, array $params = []): ?string
-    {
-        foreach ($this->routes as $route) {
-            if ($route->name === $name) {
-                $path = $route->path;
-                foreach ($params as $key => $val) {
-                    $path = str_replace("{{$key}}", $val, $path);
-                }
-                return $path;
-            }
-        }
         return null;
     }
 
-    public function loadCachedRoutes(array $controllers): bool
+    /**
+     * Invoke a route handler, injecting Request, Response, Router, and params.
+     */
+    private function invokeHandler(Route $route, array $params, Request $req, Response $res)
     {
-        if (RouteCache::isAvailable($controllers)) {
-            $routeData = RouteCache::load();
-            $this->routes = array_map(function ($routeArr) {
-                return Route::fromArray($routeArr);
-            }, $routeData);
-            return true;
+        $spec = $route->handlerSpec;
+        if (is_array($spec) && count($spec) === 2 && class_exists($spec[0])) {
+            [$class, $method] = $spec;
+            $controller = new $class();
+
+            // Property injection for #[Inject]
+            $rc = new \ReflectionClass($controller);
+            foreach ($rc->getProperties() as $prop) {
+                foreach ($prop->getAttributes(\Lento\Attributes\Inject::class) as $_) {
+                    $prop->setAccessible(true);
+                    $type = $prop->getType()?->getName();
+                    if ($type === Request::class) {
+                        $prop->setValue($controller, $req);
+                    } elseif ($type === Response::class) {
+                        $prop->setValue($controller, $res);
+                    } elseif ($type === self::class) {
+                        $prop->setValue($controller, $this);
+                    }
+                }
+            }
+
+            // Method parameter injection
+            $rm = new ReflectionMethod($class, $method);
+            $args = [];
+            foreach ($rm->getParameters() as $p) {
+                $t = $p->getType()?->getName();
+                if ($t === Request::class) {
+                    $args[] = $req;
+                } elseif ($t === Response::class) {
+                    $args[] = $res;
+                } else {
+                    $args[] = $params[$p->getName()] ?? null;
+                }
+            }
+
+            return $rm->invokeArgs($controller, $args);
         }
-        return false;
+
+        // Fallback for closures
+        return call_user_func($spec, $params);
     }
 
-    public function cacheRoutes(array $controllers): void
+    /**
+     * Check if any routes are defined.
+     */
+    public function hasRoutes(): bool
     {
-        RouteCache::store($this->routes, $controllers);
+        return !empty($this->staticRoutes) || !empty($this->dynamicRoutes);
+    }
+
+    /**
+     * Cache the current routes to a PHP file for OPcache-friendly loading.
+     */
+    public function cache(string $cacheFile): void
+    {
+        $dir = dirname($cacheFile);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0777, true);
+        }
+        $defs = ['static' => [], 'dynamic' => []];
+        foreach ($this->staticRoutes as $m => $routes) {
+            foreach ($routes as $path => $route) {
+                $spec = $route->handlerSpec;
+                if (!is_array($spec)) {
+                    continue;
+                }
+                $defs['static'][$m][$path] = [
+                    'path'       => $route->rawPath,
+                    'regex'      => $route->regex,
+                    'paramNames' => $route->paramNames,
+                    'handler'    => $spec,
+                ];
+            }
+        }
+        foreach ($this->dynamicRoutes as $m => $routes) {
+            foreach ($routes as $route) {
+                $spec = $route->handlerSpec;
+                if (!is_array($spec)) {
+                    continue;
+                }
+                $defs['dynamic'][$m][] = [
+                    'path'       => $route->rawPath,
+                    'regex'      => $route->regex,
+                    'paramNames' => $route->paramNames,
+                    'handler'    => $spec,
+                ];
+            }
+        }
+        $export = var_export($defs, true);
+        file_put_contents($cacheFile, "<?php return " . $export . ";");
+    }
+
+    /**
+     * Load routes from generated cache PHP file.
+     * Returns null if cache file missing or invalid.
+     */
+    public static function loadFromCache(string $cacheFile): ?self
+    {
+        if (!is_file($cacheFile)) {
+            return null;
+        }
+        $raw = @include $cacheFile;
+        if (!is_array($raw) || !isset($raw['static'], $raw['dynamic'])) {
+            return null;
+        }
+        $router = new self();
+        foreach ($raw['static'] as $m => $routes) {
+            foreach ($routes as $path => $def) {
+                $router->addRoute($m, $def['path'], $def['handler']);
+            }
+        }
+        foreach ($raw['dynamic'] as $m => $defs) {
+            foreach ($defs as $def) {
+                $router->addRoute($m, $def['path'], $def['handler']);
+            }
+        }
+        return $router;
+    }
+
+    /**
+     * Get all registered Route objects.
+     *
+     * @return Route[]
+     */
+    public function getRoutes(): array {
+        $all = [];
+        foreach ($this->staticRoutes as $methodRoutes) {
+            foreach ($methodRoutes as $route) {
+                $all[] = $route;
+            }
+        }
+        foreach ($this->dynamicRoutes as $methodRoutes) {
+            foreach ($methodRoutes as $route) {
+                $all[] = $route;
+            }
+        }
+        return $all;
     }
 }

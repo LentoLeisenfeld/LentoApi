@@ -2,204 +2,255 @@
 
 namespace Lento;
 
-use Lento\Container;
 use Lento\Routing\Router;
-use Lento\Exceptions\NotFoundException;
-use Lento\Attributes\{Controller, Inject, Ignore, Middleware};
-use Lento\Logging\Logger;
-use Lento\Swagger\{SwaggerController};
-use Lento\Swagger;
+use Lento\Swagger\SwaggerController;
+use Psr\Log\LoggerInterface;
+use Lento\Http\{Request, Response};
 
+/**
+ * Core API class with high-performance routing, middleware, logging, and CORS.
+ */
 class LentoApi
 {
+    /** @var Router */
     private Router $router;
-    private MiddlewareRunner $middleware;
+    /** @var string */
+    private string $cacheFile = '';
+    /** @var array<class-string, object> */
+    private array $serviceInstances = [];
+    /** @var array<class-string> */
     private array $controllers;
-    private array $services;
+    /** @var callable */
+    private $dispatcher;
+    /** @var callable[] */
+    private array $middlewares = [];
 
-    public function __construct(array $controllers = [], array $services = [])
+    /**
+     * @param array<class-string> $controllers
+     * @param array<class-string> $services
+     * @param string|null $cacheFile Path to route cache file
+     */
+    public function __construct(array $controllers, array $services, string $cacheFile = null)
     {
-        $this->router = new Router();
-        $this->middleware = new MiddlewareRunner();
         $this->controllers = $controllers;
-        $this->services = $services;
-    }
 
-    public function enableLogging(array $logger): void
-    {
-        Container::register(Logger::class, fn() => new Logger($logger));
-    }
-
-    private function registerControllers(): void
-    {
-        if (Swagger::isEnabled()) {
+        if (Env::isDev()) {
             $this->controllers[] = SwaggerController::class;
         }
 
-        foreach ($this->controllers as $controllerClass) {
-            Container::register($controllerClass, fn() => new $controllerClass());
+        $this->initDependencyInjection($services);
+
+        // Router setup with cache
+        $this->cacheFile = $cacheFile ?? __DIR__ . '/../cache/lento_routes.php';
+        $loaded = Router::loadFromCache($this->cacheFile);
+        $this->router = $loaded ?: new Router();
+        $this->serviceInstances[Router::class] = $this->router;
+        // Register and cache routes if none exist
+        if (!is_file($this->cacheFile) || !$this->router->hasRoutes()) {
+            $this->registerAttributeRoutes();
+            $this->router->cache($this->cacheFile);
         }
+
+        // Default dispatcher uses router
+        $this->dispatcher = fn(Request $req, Response $res) => $this->handle($req, $res);
     }
 
-    private function registerGlobalErrorHandling()
+    /**
+     * Register a middleware to the stack.
+     */
+    public function use(callable $middleware): self
     {
-        $this->use(function ($req, $res, $next) {
-            try {
-                return $next($req, $res);
-            } catch (NotFoundException $e) {
-                http_response_code(404);
-                header('Content-Type: application/json');
-                echo json_encode(['error' => 'Not Found', 'message' => $e->getMessage()]);
-                return null;
-            } catch (\Throwable $e) {
-                http_response_code(500);
-                header('Content-Type: application/json');
-                echo json_encode([
-                    'error' => 'Internal Server Error',
-                    'message' => 'Please try again later.'
-                ]);
+        $this->middlewares[] = $middleware;
+        return $this;
+    }
 
-                Container::get(Logger::class)->error($e);
-
-                return null;
+    /**
+     * Enable PSR-3 loggers via middleware.
+     * @param LoggerInterface[] $loggers
+     */
+    public function enableLogging(array $loggers): self
+    {
+        return $this->use(function (Request $req, Response $res, $next) use ($loggers) {
+            foreach ($loggers as $logger) {
+                $req->setLogger($logger);
             }
+            return $next($req, $res);
         });
     }
 
-    private function registerRouter()
+    /**
+     * Add simple CORS support via middleware.
+     * @param array<string,mixed> $options
+     */
+    public function useCors(array $options): self
     {
-        Container::register(Router::class, fn() => $this->router);
-    }
-
-    private function registerServices(): void
-    {
-        foreach ($this->services as $serviceClass) {
-            Container::register($serviceClass, fn() => new $serviceClass());
-        }
-    }
-
-    private function loadControllers(): void
-    {
-        foreach ($this->controllers as $controllerClass) {
-            $this->loadController($controllerClass);
-        }
-    }
-
-    public function loadController(string $classname): void
-    {
-        $rc = new \ReflectionClass($classname);
-        $attr = $rc->getAttributes(Controller::class)[0] ?? null;
-        $base = $attr ? $attr->getArguments()[0] : '';
-
-        $controllerInstance = $rc->newInstance();
-
-        // Inject services into properties
-        foreach ($rc->getProperties() as $prop) {
-            if (!empty($prop->getAttributes(Inject::class))) {
-                $type = $prop->getType();
-                if ($type) {
-                    $instanceToInject = Container::get($type->getName());
-                    $prop->setAccessible(true);
-                    $prop->setValue($controllerInstance, $instanceToInject);
+        return $this->use(function (Request $req, Response $res, $next) use ($options) {
+            foreach (['allowOrigin', 'allowMethods', 'allowHeaders', 'allowCredentials'] as $opt) {
+                if (isset($options[$opt])) {
+                    $header = str_replace('allow', 'Access-Control-', $opt);
+                    $res = $res->withHeader($header, (string) $options[$opt]);
                 }
             }
-        }
+            if ($req->getMethod() === 'OPTIONS') {
+                http_response_code(204);
+                return $res;
+            }
+            return $next($req, $res);
+        });
+    }
 
-        // Register routes from methods
-        foreach ($rc->getMethods() as $method) {
-            if ($method->getAttributes(Ignore::class)) {
-                continue;
+    /**
+     * Dispatch logic using fast Router.
+     */
+    private function handle(Request $req, Response $res): Response
+    {
+        $result = $this->router->dispatch(
+            $req->path(),
+            $req->getMethod(),
+            $req,
+            $res
+        );
+        if ($result !== null) {
+            $res->write(json_encode($result));
+            return $res;
+        }
+        return $this->defaultNotFound($req, $res);
+    }
+
+    /**
+     * Instantiate service classes once.
+     */
+    private function initDependencyInjection(array $services): void
+    {
+        foreach ($services as $cls) {
+            $this->serviceInstances[$cls] = new $cls();
+        }
+    }
+
+    /**
+     * Retrieve a service instance.
+     * @template T
+     * @param class-string<T> $className
+     * @return T|null
+     */
+    public function get(string $className)
+    {
+        return $this->serviceInstances[$className] ?? null;
+    }
+
+    /**
+     * Scan controllers for attribute-based routes.
+     */
+    /**
+     * Scan controllers for attribute-based routes, honoring class-level prefix.
+     */
+    private function registerAttributeRoutes(): void
+    {
+        foreach ($this->controllers as $className) {
+            $rc = new \ReflectionClass($className);
+
+            // 1) Class-level prefix via #[Controller('/prefix')]
+            $prefix = '';
+            foreach ($rc->getAttributes(\Lento\Attributes\Controller::class) as $classAttr) {
+                $cp = $classAttr->newInstance()->getPath();
+                $prefix = $cp !== '' ? '/' . trim($cp, '/') : '';
+                break;
             }
 
+            // 2) Iterate over method attributes (Get, Post, etc.)
+            foreach ($rc->getMethods() as $method) {
+                foreach ($method->getAttributes() as $attr) {
+                    $info = $attr->newInstance();
 
-            foreach ($method->getAttributes() as $attr) {
-                $attrName = (new \ReflectionClass($attr->getName()))->getShortName();
-                $httpVerbs = ['Get', 'Post', 'Put', 'Delete', 'Ignore'];
+                    // Method-level path or default to method name
+                    $methodPath = $info->getPath() ?: $method->getName();
 
-                if (in_array($attrName, $httpVerbs)) {
-                    $path = $attr->getArguments()[0] ?? '';
-                    $middleware = [];
+                    // Combine prefix + methodPath, normalize slashes
+                    $combined = rtrim($prefix, '/') . '/' . ltrim($methodPath, '/');
+                    $path = '/' . trim($combined, '/');
 
-                    foreach ($method->getAttributes(Middleware::class) as $mwAttr) {
-                        $middleware[] = $mwAttr->getArguments()[0];
-                    }
+                    // Register the route
                     $this->router->addRoute(
-                        strtoupper($attrName),
-                        $base . $path,
-                        [$controllerInstance, $method->getName()],
-                        $middleware,
-                        name: $method->getName() // or use attribute
+                        $info->getHttpMethod(),
+                        $path,
+                        [$className, $method->getName()]
                     );
                 }
             }
         }
     }
 
-    public function use(callable $middleware): void
-    {
-        $this->middleware->use($middleware);
-    }
 
-    public function start(): void
+    /**
+     * Resolve handler from cache spec and inject dependencies.
+     */
+    private function resolveHandler($spec)
     {
-        $this->registerRouter();
-        $this->registerGlobalErrorHandling();
-        $this->registerServices();
-        $this->registerControllers();
+        if (is_array($spec)) {
+            [$cls, $method] = $spec;
+            // instantiate controller
+            $instance = new $cls();
 
-        if (!$this->router->loadCachedRoutes($this->controllers)) {
-            $this->loadControllers();
-            $this->router->cacheRoutes($this->controllers);
+            // reflect over all properties
+            $rc = new \ReflectionClass($instance);
+            foreach ($rc->getProperties() as $prop) {
+                foreach ($prop->getAttributes(\Lento\Attributes\Inject::class) as $attr) {
+                    $type = $prop->getType()?->getName();
+                    if (!$type) {
+                        continue;
+                    }
+                    // Router injection
+                    if ($type === \Lento\Routing\Router::class) {
+                        $dep = $this->router;
+                    }
+                    // Service injection
+                    elseif (isset($this->serviceInstances[$type])) {
+                        $dep = $this->serviceInstances[$type];
+                    } else {
+                        continue;
+                    }
+                    $prop->setAccessible(true);
+                    $prop->setValue($instance, $dep);
+                }
+            }
+
+            return [ $instance, $method ];
         }
 
-        $request = (object) $_REQUEST;
-        $request->router = $this->router;
-
-        $response = (object) [];
-
-        $this->middleware->handle($request, $response, fn() => $this->router->dispatch($request, $response));
+        return $spec;
     }
 
-    public function getRouter(): Router
+
+    /**
+     * Default 404 response.
+     */
+    private function defaultNotFound(Request $req, Response $res): Response
     {
-        return $this->router;
+        http_response_code(404);
+        $res->write('404 Not Found');
+        return $res;
     }
 
-    private bool $corsEnabled = false;
-    private array $corsConfig = [];
-
-    public function useCors(array $config = []): void
+    /**
+     * Start serving requests, applying middleware stack.
+     */
+    public function start(): void
     {
-        $this->corsEnabled = true;
+        $req = Request::capture();
+        $res = new Response();
 
-        // Defaults for CORS
-        $defaultConfig = [
-            'allowOrigin' => '*',
-            'allowMethods' => 'GET, POST, PUT, DELETE, OPTIONS',
-            'allowHeaders' => 'Content-Type, Authorization',
-            'allowCredentials' => false,
-            'maxAge' => 86400,
-        ];
+        // Build middleware + router pipeline
+        $handler = array_reduce(
+            array_reverse($this->middlewares),
+            fn(callable $next, callable $mw): callable =>
+                fn(Request $req, Response $res) => $mw($req, $res, $next),
+            $this->dispatcher
+        );
 
-        $this->corsConfig = array_merge($defaultConfig, $config);
+        // Execute pipeline and capture returned Response
+        $finalResponse = $handler($req, $res);
 
-        // Register middleware that adds CORS headers
-        $this->use(function ($req, $res, $next) {
-            header('Access-Control-Allow-Origin: ' . $this->corsConfig['allowOrigin']);
-            header('Access-Control-Allow-Methods: ' . $this->corsConfig['allowMethods']);
-            header('Access-Control-Allow-Headers: ' . $this->corsConfig['allowHeaders']);
-            if ($this->corsConfig['allowCredentials']) {
-                header('Access-Control-Allow-Credentials: true');
-            }
-            header('Access-Control-Max-Age: ' . $this->corsConfig['maxAge']);
-
-            // Handle OPTIONS preflight immediately
-            if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-                http_response_code(204);
-                exit;
-            }
-
-            return $next($req, $res);
-        });
+        // Send the final Response to the client
+        $finalResponse->send();
     }
 }
