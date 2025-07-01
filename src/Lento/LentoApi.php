@@ -7,6 +7,8 @@ use Lento\Routing\Router;
 use Lento\Exceptions\NotFoundException;
 use Lento\Attributes\{Controller, Inject, Ignore, Middleware};
 use Lento\Logging\Logger;
+use Lento\Swagger\{SwaggerController};
+use Lento\Swagger;
 
 class LentoApi {
     private Router $router;
@@ -26,6 +28,10 @@ class LentoApi {
     }
 
     private function registerControllers(): void {
+        if (Swagger::isEnabled()) {
+            Container::register(SwaggerController::class, fn() => new SwaggerController());
+        }
+
         foreach ($this->controllers as $controllerClass) {
             Container::register($controllerClass, fn() => new $controllerClass());
         }

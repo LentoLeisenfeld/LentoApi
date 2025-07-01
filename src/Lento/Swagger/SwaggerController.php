@@ -4,7 +4,7 @@ namespace Lento\Swagger;
 
 use Lento\Attributes\Methods\{Get, Post};
 use Lento\Attributes\{Ignore, Inject};
-use Lento\{SwaggerGenerator};
+use Lento\Swagger\{SwaggerGenerator};
 use Lento\Routing\Router;
 
 

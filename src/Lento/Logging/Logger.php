@@ -7,7 +7,6 @@ use Psr\Log\LogLevel;
 
 class Logger implements LoggerInterface
 {
-    /** @var LoggerInterface[] */
     private array $loggers;
 
     public function __construct(array $loggers)
