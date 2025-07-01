@@ -25,6 +25,10 @@ class SwaggerGenerator
         $this->router = $router;
     }
 
+    /**
+     * Generate complete OpenAPI spec.
+     * @return array
+     */
     public function generate(): array
     {
         $options = Swagger::getOptions();
@@ -40,17 +44,28 @@ class SwaggerGenerator
         ]);
     }
 
+    /**
+     * Build path definitions from router's routes.
+     * @return array<string,array<string,mixed>>
+     */
     protected function buildPaths(): array
     {
         $paths = [];
 
-        // Use router's public method to fetch all Route objects
+        // Iterate over all routes provided by the router
         foreach ($this->router->getRoutes() as $route) {
-            $spec = $route->handlerSpec;
-            if (!is_array($spec) || count($spec) !== 2) {
+            // Normalize route descriptor (object or array)
+            $handlerSpec = is_array($route) ? ($route['handlerSpec'] ?? null) : ($route->handlerSpec ?? null);
+            if (!is_array($handlerSpec) || count($handlerSpec) !== 2) {
                 continue;
             }
-            [$controllerClass, $methodName] = $spec;
+            [$controllerClass, $methodName] = $handlerSpec;
+
+            $methodRef = is_array($route) ? ($route['method'] ?? null) : ($route->method ?? null);
+            $rawPath = is_array($route) ? ($route['rawPath'] ?? null) : ($route->rawPath ?? null);
+            if (!$methodRef || !$rawPath) {
+                continue;
+            }
 
             $refClass = new ReflectionClass($controllerClass);
             $refMethod = $refClass->getMethod($methodName);
@@ -59,10 +74,10 @@ class SwaggerGenerator
                 continue;
             }
 
-            $httpMethod = strtolower($route->method);
-            $path = $route->rawPath;
+            $httpMethod = strtolower($methodRef);
+            $path = $rawPath;
 
-            $operation = $this->buildOperation($refMethod, $route);
+            $operation = $this->buildOperation($refMethod);
 
             $paths[$path][$httpMethod] = $operation;
         }
@@ -70,16 +85,21 @@ class SwaggerGenerator
         return $paths;
     }
 
+
     protected function isIgnored(ReflectionClass $refClass, ReflectionMethod $refMethod): bool
     {
-        return $refClass->getAttributes(Ignore::class)
-            || $refMethod->getAttributes(Ignore::class);
+        return (bool) $refClass->getAttributes(Ignore::class)
+            || (bool) $refMethod->getAttributes(Ignore::class);
     }
 
-    protected function buildOperation(ReflectionMethod $method, $route): array
+    /**
+     * Build the operation object for a given controller method.
+     */
+    protected function buildOperation(ReflectionMethod $method): array
     {
         [$parameters, $requestBody, $schemas] = $this->extractParameters($method);
 
+        // Register component schemas for complex types
         foreach ($schemas as $name => $fqcn) {
             if (!isset($this->processedModels[$name])) {
                 $this->components['schemas'][$name] = $this->generateModelSchema($fqcn);
@@ -89,6 +109,7 @@ class SwaggerGenerator
 
         $responses = $this->getResponseSchemas($method);
 
+        // Build and filter operation array
         $operation = array_filter([
             'summary' => ucfirst($method->getName()),
             'operationId' => $method->getDeclaringClass()->getShortName() . '_' . $method->getName(),
@@ -96,7 +117,7 @@ class SwaggerGenerator
             'parameters' => $parameters,
             'requestBody' => $requestBody,
             'responses' => $responses,
-            'deprecated' => $method->getAttributes(Deprecated::class) ? true : false,
+            'deprecated' => $method->isDeprecated(),
             'security' => $this->getSecurity($method),
             'externalDocs' => $this->getExternalDocs($method),
         ]);
@@ -104,6 +125,10 @@ class SwaggerGenerator
         return $operation;
     }
 
+    /**
+     * Extract path parameters and request body schemas.
+     * @return array{array,array|null,array}
+     */
     protected function extractParameters(ReflectionMethod $method): array
     {
         $params = [];
@@ -111,7 +136,7 @@ class SwaggerGenerator
         $schemas = [];
 
         foreach ($method->getParameters() as $param) {
-            $attrs = $param->getAttributes(Param::class);
+            $hasParamAttr = (bool) $param->getAttributes(Param::class);
             $type = $param->getType();
             if (!$type instanceof ReflectionNamedType) {
                 continue;
@@ -119,7 +144,7 @@ class SwaggerGenerator
             $typeName = $type->getName();
 
             if (!$type->isBuiltin()) {
-                // Complex type -> requestBody
+                // Complex object => requestBody
                 $short = (new ReflectionClass($typeName))->getShortName();
                 $schemas[$short] = $typeName;
                 $requestBody = [
@@ -128,7 +153,7 @@ class SwaggerGenerator
                         'application/json' => ['schema' => ['$ref' => "#/components/schemas/$short"]]
                     ],
                 ];
-            } elseif ($attrs) {
+            } elseif ($hasParamAttr) {
                 // Path parameter
                 $params[] = [
                     'name' => $param->getName(),
@@ -142,10 +167,14 @@ class SwaggerGenerator
         return [$params, $requestBody, $schemas];
     }
 
+    /**
+     * Get response schemas for method return type.
+     */
     protected function getResponseSchemas(ReflectionMethod $method): array
     {
         $responses = [];
         $returnType = $method->getReturnType();
+
         if ($returnType instanceof ReflectionNamedType && !$returnType->isBuiltin()) {
             $fqcn = $returnType->getName();
             $short = (new ReflectionClass($fqcn))->getShortName();
@@ -162,13 +191,18 @@ class SwaggerGenerator
             'description' => 'Successful response',
             'content' => ['application/json' => ['schema' => $schema]],
         ];
+
         return $responses;
     }
 
+    /**
+     * Generate a JSON schema for a model class.
+     */
     protected function generateModelSchema(string $fqcn): array
     {
         $rc = new ReflectionClass($fqcn);
         $schema = ['type' => 'object', 'properties' => [], 'required' => []];
+
         foreach ($rc->getProperties() as $prop) {
             if (!$prop->isPublic() || !$prop->getAttributes(Property::class)) {
                 continue;
@@ -179,6 +213,7 @@ class SwaggerGenerator
                 continue;
             }
             $typeName = $type->getName();
+
             if ($type->isBuiltin()) {
                 $schema['properties'][$name] = ['type' => $this->mapType($typeName)];
             } else {
@@ -191,9 +226,13 @@ class SwaggerGenerator
             }
             $schema['required'][] = $name;
         }
+
         return $schema;
     }
 
+    /**
+     * Map PHP type to JSON schema type.
+     */
     protected function mapType(string $phpType): string
     {
         return match ($phpType) {
@@ -206,7 +245,6 @@ class SwaggerGenerator
 
     protected function getSecurity(ReflectionMethod $method): ?array
     {
-        // extend: method-level security attribute or global config
         return null;
     }
 

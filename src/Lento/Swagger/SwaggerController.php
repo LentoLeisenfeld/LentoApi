@@ -21,14 +21,14 @@ class SwaggerController
 
     }
     #[Get('/docs')]
-    public function index(Request $req, Response $res): Response
+    public function index(Request $req, Response $res)
     {
         // Serve the Swagger UI HTML page
         //header('Content-Type: text/html');
         //return file_get_contents(__DIR__ . '/swagger.html');
 
 
-                // Sanitize & build full path
+        // Sanitize & build full path
         $filename = 'swagger.html';
         $baseDir = __DIR__;
         $safeName = basename($filename);
@@ -48,10 +48,12 @@ class SwaggerController
         $content = file_get_contents($path);
 
         // Add headers and body
-        return $res
+        $res
             ->status(200)
             ->withHeader('Content-Type', $mime)
-            ->write($content);
+            ->write($content)
+            ->send();
+        return null;
     }
 
     #[Get('/swagger.json')]

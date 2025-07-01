@@ -2,56 +2,109 @@
 
 namespace Lento\Routing;
 
-use Lento\Attributes\Param;
+use Lento\Http\Request;
+use Lento\Http\Response;
 use Lento\Attributes\Service;
-use Lento\Http\{Request, Response};
-use ReflectionClass;
-use ReflectionMethod;
-
 /**
- * High-performance HTTP router with optimized caching via generated PHP code.
+ * High-performance HTTP router with precompiled closure-based routing.
  */
-#[Service()]
+#[Service]
 class Router
 {
+    /** @var array<string,callable[]> */
     private array $staticRoutes = [];
+    /** @var array<string,array{0:string,1:callable}[]> */
     private array $dynamicRoutes = [];
+    /** @var array<string,array<string,array{0:string,1:string}>> */
+    private array $staticSpecs = [];
+    /** @var array<string,array{path:string,spec:array{0:string,1:string}>[]> */
+    private array $dynamicSpecs = [];
 
     /**
-     * Add a route with a handler spec (callable or [Class, method] array).
+     * Add a new route and compile its handler closure.
+     * @param string $method HTTP method
+     * @param string $path Route path (with placeholders)
+     * @param array{0:string,1:string} $handlerSpec [ControllerClass, methodName]
      */
-    public function addRoute(string $method, string $path, $handlerSpec): void
+    public function addRoute(string $method, string $path, array $handlerSpec): void
     {
-        $route = new Route($method, $path, $handlerSpec);
-        $m = $route->method;
-        if (strpos($route->rawPath, '{') === false) {
-            $this->staticRoutes[$m][$route->rawPath] = $route;
+        // Normalize
+        $normalized = '/' . ltrim(rtrim($path, '/'), '/');
+        $m = strtoupper($method);
+
+        // Store spec for caching and Swagger
+        if (strpos($normalized, '{') === false) {
+            $this->staticSpecs[$m][$normalized] = $handlerSpec;
         } else {
-            $this->dynamicRoutes[$m][] = $route;
+            $this->dynamicSpecs[$m][] = ['path' => $normalized, 'spec' => $handlerSpec];
+        }
+
+        // Create handler closure
+        $handler = function(array $params, Request $req, Response $res) use ($handlerSpec) {
+            [$class, $methodName] = $handlerSpec;
+            $controller = new $class();
+
+            // Property injection
+            $rc = new \ReflectionClass($controller);
+            foreach ($rc->getProperties() as $prop) {
+                if ($prop->getAttributes(\Lento\Attributes\Inject::class)) {
+                    $type = $prop->getType()?->getName();
+                    $prop->setAccessible(true);
+                    match ($type) {
+                        Request::class => $prop->setValue($controller, $req),
+                        Response::class => $prop->setValue($controller, $res),
+                        Router::class => $prop->setValue($controller, $this),
+                        default => null,
+                    };
+                }
+            }
+
+            // Method parameter injection
+            $rm = $rc->getMethod($methodName);
+            $args = [];
+            foreach ($rm->getParameters() as $param) {
+                $t = $param->getType()?->getName();
+                if ($t === Request::class) {
+                    $args[] = $req;
+                } elseif ($t === Response::class) {
+                    $args[] = $res;
+                } else {
+                    $args[] = $params[$param->getName()] ?? null;
+                }
+            }
+
+            return $rm->invokeArgs($controller, $args);
+        };
+
+        // Store compiled handler
+        if (isset($this->staticSpecs[$m][$normalized])) {
+            $this->staticRoutes[$m][$normalized] = $handler;
+        } else {
+            $pattern = preg_replace('#\{(\w+)\}#', '(?P<\\1>[^/]+)', $normalized);
+            $regex = '#^' . $pattern . '$#';
+            $this->dynamicRoutes[$m][] = [$regex, $handler];
         }
     }
 
     /**
-     * Dispatch the request to the matching route.
+     * Dispatch the incoming request to the matched route.
+     * @return mixed|null
      */
     public function dispatch(string $uri, string $httpMethod, Request $req, Response $res)
     {
-        $uri = rtrim($uri, '/');
+        $path = '/' . ltrim(rtrim($uri, '/'), '/');
         $m = strtoupper($httpMethod);
 
         // Static routes
-        if (isset($this->staticRoutes[$m][$uri])) {
-            return $this->invokeHandler($this->staticRoutes[$m][$uri], [], $req, $res);
+        if (isset($this->staticRoutes[$m][$path])) {
+            return ($this->staticRoutes[$m][$path])([], $req, $res);
         }
 
         // Dynamic routes
-        foreach ($this->dynamicRoutes[$m] ?? [] as $route) {
-            if (preg_match($route->regex, $uri, $matches)) {
-                $params = [];
-                foreach ($route->paramNames as $i => $name) {
-                    $params[$name] = $matches[$i + 1] ?? null;
-                }
-                return $this->invokeHandler($route, $params, $req, $res);
+        foreach ($this->dynamicRoutes[$m] ?? [] as [$regex, $handler]) {
+            if (preg_match($regex, $path, $matches)) {
+                $params = array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
+                return $handler($params, $req, $res);
             }
         }
 
@@ -59,62 +112,7 @@ class Router
     }
 
     /**
-     * Invoke a route handler, injecting Request, Response, Router, and params.
-     */
-    private function invokeHandler(Route $route, array $params, Request $req, Response $res)
-    {
-        $spec = $route->handlerSpec;
-        if (is_array($spec) && count($spec) === 2 && class_exists($spec[0])) {
-            [$class, $method] = $spec;
-            $controller = new $class();
-
-            // Property injection for #[Inject]
-            $rc = new \ReflectionClass($controller);
-            foreach ($rc->getProperties() as $prop) {
-                foreach ($prop->getAttributes(\Lento\Attributes\Inject::class) as $_) {
-                    $prop->setAccessible(true);
-                    $type = $prop->getType()?->getName();
-                    if ($type === Request::class) {
-                        $prop->setValue($controller, $req);
-                    } elseif ($type === Response::class) {
-                        $prop->setValue($controller, $res);
-                    } elseif ($type === self::class) {
-                        $prop->setValue($controller, $this);
-                    }
-                }
-            }
-
-            // Method parameter injection
-            $rm = new ReflectionMethod($class, $method);
-            $args = [];
-            foreach ($rm->getParameters() as $p) {
-                $t = $p->getType()?->getName();
-                if ($t === Request::class) {
-                    $args[] = $req;
-                } elseif ($t === Response::class) {
-                    $args[] = $res;
-                } else {
-                    $args[] = $params[$p->getName()] ?? null;
-                }
-            }
-
-            return $rm->invokeArgs($controller, $args);
-        }
-
-        // Fallback for closures
-        return call_user_func($spec, $params);
-    }
-
-    /**
-     * Check if any routes are defined.
-     */
-    public function hasRoutes(): bool
-    {
-        return !empty($this->staticRoutes) || !empty($this->dynamicRoutes);
-    }
-
-    /**
-     * Cache the current routes to a PHP file for OPcache-friendly loading.
+     * Cache the route specs as PHP code that replays addRoute calls.
      */
     public function cache(string $cacheFile): void
     {
@@ -122,83 +120,73 @@ class Router
         if (!is_dir($dir)) {
             mkdir($dir, 0777, true);
         }
-        $defs = ['static' => [], 'dynamic' => []];
-        foreach ($this->staticRoutes as $m => $routes) {
-            foreach ($routes as $path => $route) {
-                $spec = $route->handlerSpec;
-                if (!is_array($spec)) {
-                    continue;
-                }
-                $defs['static'][$m][$path] = [
-                    'path'       => $route->rawPath,
-                    'regex'      => $route->regex,
-                    'paramNames' => $route->paramNames,
-                    'handler'    => $spec,
-                ];
+
+        $code = "<?php\n";
+        $code .= "use Lento\\Routing\\Router;\n";
+        $code .= "return (function(): Router {\n";
+        $code .= "    \$r = new Router();\n";
+
+        // Static routes
+        foreach ($this->staticSpecs as $m => $routes) {
+            foreach ($routes as $path => $spec) {
+                [$cls, $mth] = $spec;
+                $code .= sprintf("    \$r->addRoute('%s', '%s', ['%s','%s']);\n",
+                    addslashes($m), addslashes($path), $cls, $mth
+                );
             }
         }
-        foreach ($this->dynamicRoutes as $m => $routes) {
-            foreach ($routes as $route) {
-                $spec = $route->handlerSpec;
-                if (!is_array($spec)) {
-                    continue;
-                }
-                $defs['dynamic'][$m][] = [
-                    'path'       => $route->rawPath,
-                    'regex'      => $route->regex,
-                    'paramNames' => $route->paramNames,
-                    'handler'    => $spec,
-                ];
+        // Dynamic routes
+        foreach ($this->dynamicSpecs as $m => $entries) {
+            foreach ($entries as $entry) {
+                [$cls, $mth] = $entry['spec'];
+                $code .= sprintf("    \$r->addRoute('%s', '%s', ['%s','%s']);\n",
+                    addslashes($m), addslashes($entry['path']), $cls, $mth
+                );
             }
         }
-        $export = var_export($defs, true);
-        file_put_contents($cacheFile, "<?php return " . $export . ";");
+        $code .= "    return \$r;\n";
+        $code .= "})();\n";
+
+        file_put_contents($cacheFile, $code);
     }
 
     /**
-     * Load routes from generated cache PHP file.
-     * Returns null if cache file missing or invalid.
+     * Load Router from cache file.
      */
     public static function loadFromCache(string $cacheFile): ?self
     {
         if (!is_file($cacheFile)) {
             return null;
         }
-        $raw = @include $cacheFile;
-        if (!is_array($raw) || !isset($raw['static'], $raw['dynamic'])) {
-            return null;
-        }
-        $router = new self();
-        foreach ($raw['static'] as $m => $routes) {
-            foreach ($routes as $path => $def) {
-                $router->addRoute($m, $def['path'], $def['handler']);
-            }
-        }
-        foreach ($raw['dynamic'] as $m => $defs) {
-            foreach ($defs as $def) {
-                $router->addRoute($m, $def['path'], $def['handler']);
-            }
-        }
-        return $router;
+        $router = include $cacheFile;
+        return $router instanceof self ? $router : null;
     }
 
     /**
-     * Get all registered Route objects.
-     *
-     * @return Route[]
+     * Check if any routes are defined.
      */
-    public function getRoutes(): array {
-        $all = [];
-        foreach ($this->staticRoutes as $methodRoutes) {
-            foreach ($methodRoutes as $route) {
-                $all[] = $route;
+    public function hasRoutes(): bool
+    {
+        return !empty($this->staticSpecs) || !empty($this->dynamicSpecs);
+    }
+
+    /**
+     * Get all registered routes for Swagger.
+     * @return array{method:string, rawPath:string, handlerSpec:array}[]
+     */
+    public function getRoutes(): array
+    {
+        $list = [];
+        foreach ($this->staticSpecs as $m => $routes) {
+            foreach ($routes as $path => $spec) {
+                $list[] = (object)['method'=>$m,'rawPath'=>$path,'handlerSpec'=>$spec];
             }
         }
-        foreach ($this->dynamicRoutes as $methodRoutes) {
-            foreach ($methodRoutes as $route) {
-                $all[] = $route;
+        foreach ($this->dynamicSpecs as $m => $entries) {
+            foreach ($entries as $e) {
+                $list[] = (object)['method'=>$m,'rawPath'=>$e['path'],'handlerSpec'=>$e['spec']];
             }
         }
-        return $all;
+        return $list;
     }
 }
