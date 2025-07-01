@@ -1,6 +1,8 @@
 <?php
 namespace Lento;
 
+use \Lento\Attributes\Inject;
+
 class Container {
     private static $services = [];
     private static $instances = [];
@@ -20,7 +22,7 @@ class Container {
             // Handle #[Inject] properties
             $ref = new \ReflectionClass($instance);
             foreach ($ref->getProperties() as $property) {
-                $attributes = $property->getAttributes(\Lento\Attributes\Inject::class);
+                $attributes = $property->getAttributes(Inject::class);
                 if (!empty($attributes)) {
                     $dependencyClass = $property->getType()->getName();
                     $dependency = self::get($dependencyClass);
