@@ -165,12 +165,235 @@ class UserService {
 
 ---
 
-## ORM Integration
+## ORM: Database Configuration
 
-LentoApi bundles **Illuminate Database** (Laravel’s Eloquent ORM) for powerful and expressive database access.
-You can then use Eloquent models and queries in your services and controllers.
+LentoApi includes a simple `ORM` utility for easy [Eloquent ORM](https://laravel.com/docs/eloquent) integration using `illuminate/database`.
+**You only need one line to connect to any supported database!**
+
+### Quick Usage
+
+```php
+use Lento\ORM;
+
+// SQLite
+ORM::configure('sqlite:./database.sqlite');
+ORM::configure('sqlite::memory:');
+
+// PostgreSQL
+ORM::configure('pgsql:host=localhost;port=5432;dbname=mydb;user=myuser;password=secret');
+
+// MySQL/MariaDB
+ORM::configure('mysql:host=localhost;port=3306;dbname=mydb;user=root;password=secret;charset=utf8mb4');
+
+// Microsoft SQL Server
+ORM::configure('sqlsrv:Server=localhost;Database=mydb;User=sa;Password=secret');
+ORM::configure('mssql:host=localhost;port=1433;dbname=mydb;user=sa;password=secret');
+```
+
+After calling `ORM::configure(...)`, you can use [Eloquent models and queries](https://laravel.com/docs/eloquent) anywhere in your app.
 
 ---
+
+### Supported DSN Formats
+
+| Driver      | Example DSN                                                                            |
+|-------------|----------------------------------------------------------------------------------------|
+| SQLite      | `sqlite:./database.sqlite` <br> `sqlite::memory:`                                      |
+| PostgreSQL  | `pgsql:host=localhost;port=5432;dbname=test;user=me;password=secret`                   |
+| MySQL       | `mysql:host=localhost;port=3306;dbname=test;user=root;password=secret;charset=utf8mb4` |
+| SQL Server  | `sqlsrv:Server=localhost;Database=test;User=sa;Password=secret` <br> `mssql:...`       |
+
+---
+
+### Optional Dependency
+
+> **Note:**
+> `illuminate/database` is only required if you use the ORM.
+> If not installed, calling `ORM::configure()` will throw a clear error.
+>
+> Install with:
+> ```bash
+> composer require illuminate/database
+> ```
+
+---
+
+### Custom Options
+
+You can extend/modify the ORM class to support more options and DSN variations.
+See the `ORM` source for driver-specific parsing and available connection parameters.
+
+---
+
+## ORM Cheatsheet: Models and Queries
+
+After `ORM::configure(...)`, you can use [Eloquent models](https://laravel.com/docs/eloquent) as in Laravel.
+
+### 1. Defining a Model
+
+Create a model class extending `\Illuminate\Database\Eloquent\Model`:
+
+```php
+use Illuminate\Database\Eloquent\Model;
+
+class User extends Model
+{
+    protected $table = 'users'; // optional if table name matches class name
+    protected $fillable = ['name', 'email']; // allow mass assignment
+    public $timestamps = false; // set true if you have created_at/updated_at columns
+}
+```
+
+### 2. Basic Queries
+
+```php
+// Fetch all users
+$users = User::all();
+
+// Find by primary key
+$user = User::find(1);
+
+// Where clause
+$user = User::where('email', 'test@example.com')->first();
+
+// Insert
+$newUser = User::create(['name' => 'Alice', 'email' => 'alice@example.com']);
+
+// Update
+$user->name = 'Bob';
+$user->save();
+
+// Delete
+$user->delete();
+```
+
+### 3. Relationships
+
+```php
+class Post extends Model {
+    public function user() {
+        return $this->belongsTo(User::class);
+    }
+}
+
+class User extends Model {
+    public function posts() {
+        return $this->hasMany(Post::class);
+    }
+}
+
+// Usage:
+$user = User::find(1);
+$posts = $user->posts;
+
+$post = Post::find(1);
+$author = $post->user;
+```
+
+### 4. Query Builder
+
+You can use Eloquent's query builder for complex queries:
+
+```php
+$results = User::where('created_at', '>', '2024-01-01')
+    ->orderBy('name')
+    ->limit(10)
+    ->get();
+```
+
+### 5. Raw SQL
+
+```php
+use Illuminate\Support\Facades\DB;
+
+$users = DB::select('select * from users where active = ?', [1]);
+```
+
+---
+
+**For more, see the [Laravel Eloquent documentation](https://laravel.com/docs/eloquent).**
+
+---
+
+## Parameter Binding Attributes
+
+LentoApi supports advanced, type-safe parameter injection for your controller methods.
+You can use the following attributes to explicitly bind route, query, or body parameters to your method arguments:
+
+### Supported Attributes
+
+| Attribute                | Description                                    | Example Use                        |
+|--------------------------|------------------------------------------------|-------------------------------------|
+| `#[Param(source: "...")]`| Universal; supports `route`, `query`, `body`   | `#[Param(source: "body")]`          |
+| `#[Route]`               | Shorthand for route/path parameters            | `#[Route] string $id`               |
+| `#[Query]`               | Shorthand for query string (?foo=) parameters  | `#[Query] string $search`           |
+| `#[Body]`                | Shorthand for body (JSON/form) parameters      | `#[Body] UserDTO $user`             |
+
+---
+
+### Usage Example
+
+```php
+use Lento\Attributes\{Route, Query, Body, Param};
+
+class UserController
+{
+    public function getProfile(
+        #[Route] string $userId,                   // from /users/{userId}
+        #[Query] ?string $expand = null,           // from ?expand=...
+        #[Body] UserProfileUpdateDTO $payload      // from POST/PUT body (JSON or form)
+    ) {
+        // ...
+    }
+
+    public function legacyExample(
+        #[Param(source: "route")] string $userId,
+        #[Param(source: "query")] ?string $token,
+        #[Param(source: "body")] LoginInputDTO $data
+    ) {
+        // ...
+    }
+}
+```
+
+---
+
+### How It Works
+
+- `#[Route]`: Binds the parameter to a route placeholder (e.g., `/user/{id}` → `$id`).
+- `#[Query]`: Binds the parameter to a query string value (e.g., `?token=...`).
+- `#[Body]`: Binds the parameter to a property in the request body (POST/PUT JSON or form data).
+  - If the parameter type is a class, it is auto-instantiated with the body data.
+- `#[Param]`: A universal attribute where you can specify `source` (`route`, `query`, or `body`).
+  Useful for compatibility or for dynamic scenarios.
+
+#### Parameter name overrides
+
+You can also specify a custom parameter name:
+
+```php
+public function getUser(
+    #[Route("uuid")] string $userId  // binds route {uuid} to $userId
+) { ... }
+```
+Or:
+```php
+public function find(
+    #[Query("q")] string $queryTerm  // binds ?q=... to $queryTerm
+) { ... }
+```
+
+---
+
+### Best Practice
+
+- Prefer `#[Route]`, `#[Query]`, and `#[Body]` for readability and clarity.
+- Use `#[Param(source: "...")]` for maximum control or legacy compatibility.
+
+---
+
+**See the `/src/Lento/Attributes` directory for attribute definitions.**
+
 
 
 ## Requirements
