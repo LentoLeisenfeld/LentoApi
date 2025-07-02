@@ -6,38 +6,41 @@ use Lento\Attributes\Inject;
 
 class Container
 {
-    public static $services = [];
-    public static $instances = [];
+    /** @var array<string,object> */
+    private array $services = [];
 
-    public static function register(string $name, callable $factory)
+    /**
+     * Register a service instance under its class name.
+     * @param object $service
+     */
+    public function set(object $service): void
     {
-        self::$services[$name] = $factory;
+        $this->services[get_class($service)] = $service;
     }
 
-    public static function get(string $name)
+    /**
+     * Get a service by class name. Auto-instantiate if not registered.
+     * @template T
+     * @param class-string<T> $className
+     * @return T
+     * @throws \Exception
+     */
+    public function get(string $className)
     {
-        if (!isset(self::$instances[$name])) {
-            if (!isset(self::$services[$name])) {
-                throw new \Exception("Service '$name' not registered");
-            }
-
-            $instance = self::$services[$name]();
-
-            // Handle #[Inject] properties
-            $ref = new \ReflectionClass($instance);
-            foreach ($ref->getProperties() as $property) {
-                $attributes = $property->getAttributes(Inject::class);
-                if (!empty($attributes)) {
-                    $dependencyClass = $property->getType()->getName();
-                    $dependency = self::get($dependencyClass);
-                    $property->setAccessible(true);
-                    $property->setValue($instance, $dependency);
-                }
-            }
-
-            self::$instances[$name] = $instance;
+        // Return existing
+        if (isset($this->services[$className])) {
+            return $this->services[$className];
         }
-
-        return self::$instances[$name];
+        // Auto-wire concrete classes
+        if (class_exists($className)) {
+            $reflect = new \ReflectionClass($className);
+            // For simple classes without constructor or with optional params
+            if (!$reflect->getConstructor() || $reflect->getConstructor()->getNumberOfRequiredParameters() === 0) {
+                $instance = $reflect->newInstance();
+                $this->services[$className] = $instance;
+                return $instance;
+            }
+        }
+        throw new \Exception("Service '$className' not registered");
     }
 }

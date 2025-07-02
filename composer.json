@@ -21,7 +21,7 @@
   "scripts": {
     "start:lint": "phpcs --standard=PSR12 src",
     "start:lint:fix": "phpcbf --standard=PSR12 src",
-    "start:test": ""
+    "start:test": "phpunit"
   },
   "autoload": {
     "psr-4": {
