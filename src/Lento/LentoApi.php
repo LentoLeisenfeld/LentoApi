@@ -128,6 +128,14 @@ class LentoApi
     }
 
     /**
+     * Instantiate service classes once.
+     */
+    public function getRouter(): Router
+    {
+        return $this->router;
+    }
+
+    /**
      * Retrieve a service instance.
      * @template T
      * @param class-string<T> $className

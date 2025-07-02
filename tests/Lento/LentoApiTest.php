@@ -2,15 +2,15 @@
 
 use PHPUnit\Framework\TestCase;
 use Lento\LentoApi;
-use Lento\Routing\Router;
 use Lento\Attributes\Controller;
 use Lento\Attributes\Methods\Get;
+use Lento\Http\{Request, Response};
 
 #[Controller('/hello')]
 class DummyController {
     #[Get('/index')]
-    public function getIndex() {
-        return 'Hello World';
+    public function getIndex(Request $req, Response $res) {
+        return $res->write('Hello World')->send();
     }
 }
 
@@ -19,14 +19,15 @@ class LentoApiTest extends TestCase {
         $_SERVER['REQUEST_URI'] = '/hello/index';
         $_SERVER['REQUEST_METHOD'] = 'GET';
 
-        $api = new LentoApi(controllers: [DummyController::class]);
+        $api = new LentoApi(controllers: [DummyController::class],  services: []);
+
+        $router = $api->getRouter();
+        $routes = $router->getRoutes();
 
         ob_start();
         $api->start();
         $output = ob_get_clean();
 
-        $router = $api->getRouter();
-        $routes = $router->getRoutes();
 
         $this->assertNotEmpty($routes);
         $this->assertEquals('/hello/index', $routes[0]->path);
@@ -38,7 +39,7 @@ class LentoApiTest extends TestCase {
         $_SERVER['REQUEST_METHOD'] = 'GET';
         $_SERVER['REQUEST_URI'] = '/hello/index';
 
-        $api = new LentoApi(controllers: [DummyController::class]);
+        $api = new LentoApi(controllers: [DummyController::class],services: []);
 
         ob_start();
         $api->start();
