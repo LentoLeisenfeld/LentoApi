@@ -49,6 +49,35 @@ class Request
         return $req;
     }
 
+    /**
+     * Get a value from the query string.
+     */
+    public function query(string $key, $default = null)
+    {
+        return $_GET[$key] ?? $default;
+    }
+
+    /**
+     * Get a value from the request body (JSON or form).
+     */
+    public function body(string $key = null, $default = null)
+    {
+        // Parse body just once, cache result
+        static $data;
+        if ($data === null) {
+            $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+            if (stripos($contentType, 'application/json') !== false) {
+                $data = json_decode(file_get_contents('php://input'), true) ?? [];
+            } else {
+                $data = $_POST;
+            }
+        }
+        if ($key === null) {
+            return $data;
+        }
+        return $data[$key] ?? $default;
+    }
+
     public function getMethod(): string
     {
         return $this->method;
@@ -62,11 +91,6 @@ class Request
     public function header(string $name): ?string
     {
         return $this->headers[$name] ?? null;
-    }
-
-    public function query(string $key, $default = null)
-    {
-        return $this->query[$key] ?? $default;
     }
 
     public function input(string $key, $default = null)

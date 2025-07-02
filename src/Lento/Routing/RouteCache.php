@@ -37,32 +37,18 @@ class RouteCache
         return true;
     }
 
-    public static function load(): array
+    public static function loadToRouter(\Lento\Routing\Router $router): void
     {
-        return require self::CACHE_FILE;
+        if (!file_exists(self::CACHE_FILE))
+            return;
+        $data = require self::CACHE_FILE;
+        $router->importCacheData($data);
     }
 
-    public static function store(array $routes, array $controllers): void
+    public static function storeFromRouter(\Lento\Routing\Router $router): void
     {
-        if (!is_dir(dirname(self::CACHE_FILE))) {
-            mkdir(dirname(self::CACHE_FILE), 0777, true);
-        }
-
-        $exported = array_map(fn($route) => $route->toArray(), $routes);
-
+        $data = $router->exportCacheData();
         $header = "<?php\n// AUTO-GENERATED FILE - DO NOT EDIT\n\n";
-        file_put_contents(self::CACHE_FILE, $header . 'return ' . var_export($exported, true) . ';');
-
-        $meta = [];
-        foreach ($controllers as $controller) {
-            $ref = new \ReflectionClass($controller);
-            $file = $ref->getFileName();
-            if (file_exists($file)) {
-                $meta[$file] = filemtime($file);
-            }
-        }
-
-        $header = "<?php\n// AUTO-GENERATED FILE - DO NOT EDIT\n\n";
-        file_put_contents(self::META_FILE, $header . 'return ' . var_export($meta, true) . ';');
+        file_put_contents(self::CACHE_FILE, $header . 'return ' . var_export($data, true) . ';');
     }
 }
