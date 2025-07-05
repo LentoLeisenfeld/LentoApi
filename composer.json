@@ -29,15 +29,17 @@
     }
   },
   "require": {
-    "php": ">=8.4",
-    "psr/log": "^3.0"
+    "php": ">=8.4"
   },
   "require-dev": {
     "phpunit/phpunit": "12.2.5",
-    "squizlabs/php_codesniffer": "^3.13"
+    "squizlabs/php_codesniffer": "^3.13",
+    "monolog/monolog": "^3.9",
+    "psr/log": "^3.0"
   },
   "suggest": {
-    "illuminate/database": "Enable ORM::configure() and Eloquent ORM support"
+    "illuminate/database": "Enable \\Lento\\ORM::configure() and Eloquent ORM support",
+    "monolog/monolog": "Powerful logging with handlers, channels, and JSON output (used for \\Lento\\Logger::setLogger())."
   },
   "minimum-stability": "stable",
   "prefer-stable": true
