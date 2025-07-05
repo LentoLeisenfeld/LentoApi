@@ -6,6 +6,7 @@ use Lento\Http\Request;
 use Lento\Http\Response;
 use Lento\Attributes\Service;
 use Lento\Container;
+use Lento\JWT;
 
 /**
  * High-performance HTTP router with precompiled closure-based routing and DI container support.
@@ -67,6 +68,9 @@ class Router
      */
     public function dispatch(string $uri, string $httpMethod, Request $req, Response $res)
     {
+        $jwtPayload = JWT::fromRequestHeaders($req->headers);
+        $req->jwt = $jwtPayload;
+
         $path = '/' . ltrim(rtrim($uri, '/'), '/');
         $m = strtoupper($httpMethod);
 
@@ -85,12 +89,36 @@ class Router
         }
 
         if (!$handler) {
-            // 404 Not Found
-            $res->status(404)->write('Not found')->send();
-            return;
+            return $res->status(404)->withHeader('Content-Type', 'application/json')
+                ->write(json_encode(['error' => 'Not found']))->send();
         }
 
-        $result = $handler($req, $res);
+        try {
+            $result = $handler($req, $res);
+        } catch (\Lento\Exceptions\NotFoundException $e) {
+            return $res->status(404)->withHeader('Content-Type', 'application/json')
+                ->write(json_encode(['error' => $e->getMessage()]))->send();
+        } catch (\Lento\Exceptions\UnauthorizedException $e) {
+            return $res->status(401)->withHeader('Content-Type', 'application/json')
+                ->write(json_encode(['error' => $e->getMessage()]))->send();
+        } catch (\Lento\Exceptions\ForbiddenException $e) {
+            return $res->status(403)->withHeader('Content-Type', 'application/json')
+                ->write(json_encode(['error' => $e->getMessage()]))->send();
+        } catch (\Lento\Exceptions\ValidationException $e) {
+            // Optionally support getErrors() for details
+            $body = ['error' => $e->getMessage()];
+            if (method_exists($e, 'getErrors'))
+                $body['details'] = $e->getErrors();
+            return $res->status(422)->withHeader('Content-Type', 'application/json')
+                ->write(json_encode($body))->send();
+        } catch (\DomainException | \LogicException $e) {
+            return $res->status(400)->withHeader('Content-Type', 'application/json')
+                ->write(json_encode(['error' => $e->getMessage()]))->send();
+        } catch (\Throwable $e) {
+            // Generic fallback
+            return $res->status(500)->withHeader('Content-Type', 'application/json')
+                ->write(json_encode(['error' => 'Internal Server Error']))->send();
+        }
 
         // --- RESPONSE HANDLING ---
         if ($result instanceof Response) {
@@ -107,6 +135,7 @@ class Router
             $res->write((string) $result)->send();
         }
     }
+
 
     /**
      * Pure-data cache for routes.

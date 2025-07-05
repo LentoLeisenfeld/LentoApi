@@ -4,7 +4,6 @@ namespace Lento;
 
 use Lento\Routing\{Router, RouteCache};
 use Lento\Swagger\SwaggerController;
-use Psr\Log\LoggerInterface;
 use Lento\Http\{Request, Response};
 
 /**
@@ -56,20 +55,6 @@ class LentoApi
     }
 
     /**
-     * Enable PSR-3 loggers via middleware.
-     * @param LoggerInterface[] $loggers
-     */
-    public function enableLogging(array $loggers): self
-    {
-        return $this->use(function (Request $req, Response $res, $next) use ($loggers) {
-            foreach ($loggers as $logger) {
-                $req->setLogger($logger);
-            }
-            return $next($req, $res);
-        });
-    }
-
-    /**
      * Add simple CORS support via middleware.
      * @param array<string,mixed> $options
      */
@@ -82,7 +67,7 @@ class LentoApi
                     $res = $res->withHeader($header, (string) $options[$opt]);
                 }
             }
-            if ($req->getMethod() === 'OPTIONS') {
+            if ($req->method === 'OPTIONS') {
                 http_response_code(204);
                 return $res;
             }
@@ -96,8 +81,8 @@ class LentoApi
     private function handle(Request $req, Response $res): Response
     {
         $result = $this->router->dispatch(
-            $req->path(),
-            $req->getMethod(),
+            $req->path,
+            $req->method,
             $req,
             $res
         );
