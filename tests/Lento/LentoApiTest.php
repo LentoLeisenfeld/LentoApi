@@ -2,7 +2,7 @@
 
 use PHPUnit\Framework\TestCase;
 use Lento\LentoApi;
-use Lento\Attributes\Controller;
+use Lento\Routing\Attributes\Controller;
 use Lento\Http\Attributes\Get;
 use Lento\Http\{Request, Response};
 
@@ -19,7 +19,7 @@ class LentoApiTest extends TestCase {
         $_SERVER['REQUEST_URI'] = '/hello/index';
         $_SERVER['REQUEST_METHOD'] = 'GET';
 
-        $api = new LentoApi(controllers: [DummyController::class],  services: []);
+        $api = new LentoApi(controllers: [DummyController::class]);
 
         $router = $api->getRouter();
         $routes = $router->getRoutes();
@@ -39,7 +39,7 @@ class LentoApiTest extends TestCase {
         $_SERVER['REQUEST_METHOD'] = 'GET';
         $_SERVER['REQUEST_URI'] = '/hello/index';
 
-        $api = new LentoApi(controllers: [DummyController::class],services: []);
+        $api = new LentoApi(controllers: [DummyController::class]);
 
         ob_start();
         $api->start();
