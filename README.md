@@ -19,7 +19,7 @@ A lightweight, modular PHP API framework with built-in routing, **Illuminate Dat
 - PSR-3 compatible logging with flexible loggers (file, stdout)
 - Built-in CORS support
 - Middleware pipeline support
-- Swagger/OpenAPI integration
+- OpenAPI/OpenAPI integration
 - Simple dependency injection using `#[Service]` and `#[Inject]` attributes
 
 ---
@@ -65,7 +65,7 @@ ORM::configure('sqlite:./database.sqlite');
 
 // Register controllers
 $controllers = [
-    Lento\Swagger\SwaggerController::class,
+    Lento\OpenAPI\OpenAPIController::class,
     App\Controllers\HelloController::class
 ];
 

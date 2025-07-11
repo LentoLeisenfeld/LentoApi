@@ -1,26 +1,74 @@
 <?php
 
-namespace Lento\Swagger;
+namespace Lento\OpenAPI;
 
-class SwaggerOptions
+/**
+ * Undocumented class
+ */
+class OpenAPIOptions
 {
+    /**
+     * Undocumented variable
+     *
+     * @var string
+     */
     public string $title = 'API Documentation';
+
+    /**
+     * Undocumented variable
+     *
+     * @var string
+     */
     public string $version = '1.0.0';
+
+    /**
+     * Undocumented variable
+     *
+     * @var string
+     */
     public string $description = 'Generated API documentation';
 
     // Optional extras for future extension
+    /**
+     * Undocumented variable
+     *
+     * @var array
+     */
     public array $servers = [];
+
+    /**
+     * Undocumented variable
+     *
+     * @var array
+     */
     public array $tags = [];
 
-    /** @var array<string, mixed> */
+    /**
+     * Undocumented variable
+     *
+     * @var array<string, mixed>
+     */
     public array $securitySchemes = [];
 
-    /** @var array<int, array<string, array>> */
+    /**
+     * Undocumented variable
+     *
+     * @var array<int, array<string, array>>
+     */
     public array $security = [];
 
-    /** @var array{description?: string, url?: string}|null */
+    /**
+     * Undocumented variable
+     *
+     * @var array{description?: string, url?: string}|null
+     */
     public ?array $externalDocs = null;
 
+    /**
+     * Undocumented function
+     *
+     * @param array $options
+     */
     public function __construct(array $options = [])
     {
         foreach ($options as $key => $value) {
@@ -30,6 +78,11 @@ class SwaggerOptions
         }
     }
 
+    /**
+     * Undocumented function
+     *
+     * @return array
+     */
     public function toArray(): array
     {
         $info = [
