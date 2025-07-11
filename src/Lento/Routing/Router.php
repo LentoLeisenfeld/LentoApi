@@ -18,13 +18,16 @@ use ReflectionClass;
 use DomainException;
 use LogicException;
 use Throwable;
+use ReflectionAttribute;
 
 use Lento\Formatter\Attributes\{JSONFormatter, SimpleXmlFormatter, FileFormatter};
-use Lento\Container;
+use Lento\{Container};
 use Lento\Http\{Request, Response};
 use Lento\Routing\Attributes\{Service, Body, Param, Query, Inject};
 use Lento\Auth\JWT;
 use Lento\Exceptions\{NotFoundException, UnauthorizedException, ForbiddenException, ValidationException};
+use Lento\Logging\Logger;
+use Lento\OpenAPI\Attributes\Throws;
 
 /**
  * Class Router
@@ -70,16 +73,31 @@ class Router
         // Use formatter attribute if given, else default to JSON
         $formatter = $formatterAttr ?: ['type' => 'json', 'options' => null];
 
+        // === NEW: Discover #[Throws] attributes on the controller method ===
+        $throwsAttrs = [];
+        try {
+            $rc = new ReflectionClass($handlerSpec[0]);
+            $rm = $rc->getMethod($handlerSpec[1]);
+            $throwsAttrs = array_map(
+                fn($attr) => $attr->newInstance(),
+                $rm->getAttributes(Throws::class, ReflectionAttribute::IS_INSTANCEOF)
+            );
+        } catch (Throwable $e) {
+            // Optionally: log or ignore missing class/method
+        }
+
+        // PATCH: Save formatter AND throws in staticSpecs and dynamicSpecs for cache
+        $specEntry = [
+            'spec' => $handlerSpec,
+            'formatter' => self::exportFormatter($formatter),
+            'throws' => self::exportThrows($throwsAttrs), // new
+        ];
+
         $routeData = [
             'handler' => $this->makeHandler($handlerSpec),
             'formatter' => $formatter,
             'spec' => $handlerSpec,
-        ];
-
-        // Patch: Save formatter in staticSpecs and dynamicSpecs for cache
-        $specEntry = [
-            'spec' => $handlerSpec,
-            'formatter' => self::exportFormatter($formatter),
+            'throws' => $throwsAttrs, // new
         ];
 
         if (strpos($normalized, '{') === false) {
@@ -92,10 +110,24 @@ class Router
             $this->dynamicSpecs[$m][] = [
                 'path' => $normalized,
                 'spec' => $handlerSpec,
-                'formatter' => self::exportFormatter($formatter)
+                'formatter' => self::exportFormatter($formatter),
+                'throws' => self::exportThrows($throwsAttrs), // new
             ];
         }
     }
+
+    // Helper to export throws array for cache (add to Router)
+    private static function exportThrows(array $throwsAttrs): array
+    {
+        return array_map(function ($attr) {
+            return [
+                'exception' => $attr->exception,
+                'status' => $attr->status,
+                'description' => $attr->description,
+            ];
+        }, $throwsAttrs);
+    }
+
 
     /**
      * Helper: resolve formatter attribute, return ['type'=>..., 'options'=>...]
@@ -153,27 +185,40 @@ class Router
         try {
             $result = $handler($params, $req, $res);
         } catch (NotFoundException $e) {
-            return $res->status(404)->withHeader('Content-Type', 'application/json')
-                ->write(json_encode(['error' => $e->getMessage()]))->send();
+            return $res->status($e->getCode() ?: 404)
+                ->withHeader('Content-Type', 'application/json')
+                ->write(json_encode(['error' => $e->getMessage()]))
+                ->send();
         } catch (UnauthorizedException $e) {
-            return $res->status(401)->withHeader('Content-Type', 'application/json')
-                ->write(json_encode(['error' => $e->getMessage()]))->send();
+            return $res->status($e->getCode() ?: 401)
+                ->withHeader('Content-Type', 'application/json')
+                ->write(json_encode(['error' => $e->getMessage()]))
+                ->send();
         } catch (ForbiddenException $e) {
-            return $res->status(403)->withHeader('Content-Type', 'application/json')
-                ->write(json_encode(['error' => $e->getMessage()]))->send();
+            return $res->status($e->getCode() ?: 403)
+                ->withHeader('Content-Type', 'application/json')
+                ->write(json_encode(['error' => $e->getMessage()]))
+                ->send();
         } catch (ValidationException $e) {
             $body = ['error' => $e->getMessage()];
             if (method_exists($e, 'getErrors')) {
                 $body['details'] = $e->getErrors();
             }
-            return $res->status(422)->withHeader('Content-Type', 'application/json')
-                ->write(json_encode($body))->send();
+            return $res->status($e->getCode() ?: 422)
+                ->withHeader('Content-Type', 'application/json')
+                ->write(json_encode($body))
+                ->send();
         } catch (DomainException | LogicException $e) {
-            return $res->status(400)->withHeader('Content-Type', 'application/json')
-                ->write(json_encode(['error' => $e->getMessage()]))->send();
+            return $res->status($e->getCode() ?: 400)
+                ->withHeader('Content-Type', 'application/json')
+                ->write(json_encode(['error' => $e->getMessage()]))
+                ->send();
         } catch (Throwable $e) {
-            return $res->status(500)->withHeader('Content-Type', 'application/json')
-                ->write(json_encode(['error' => 'Internal Server Error']))->send();
+            Logger::error($e);
+            return $res->status(500)
+                ->withHeader('Content-Type', 'application/json')
+                ->write(json_encode(['error' => 'Internal Server Error']))
+                ->send();
         }
 
         // -------- FORMATTER HANDLING ---------
@@ -336,95 +381,114 @@ class Router
     {
         [$class, $methodName] = $handlerSpec;
         return function (array $params, $req, $res) use ($class, $methodName) {
-            // Use container for controller instantiation if available
+            // Instantiate controller (with DI)
             $controller = $this->container
                 ? $this->container->get($class)
                 : new $class();
 
-            // Property injection (with service support)
+            // Robust property injection
             $rc = new ReflectionClass($controller);
-            foreach ($rc->getProperties() as $prop) {
-                if ($prop->getAttributes(Inject::class)) {
-                    $type = $prop->getType()?->getName();
-                    $prop->setAccessible(true);
-                    if ($type === Request::class) {
-                        $prop->setValue($controller, $req);
-                    } elseif ($type === Response::class) {
-                        $prop->setValue($controller, $res);
-                    } elseif ($type === self::class) {
-                        $prop->setValue($controller, $this);
-                    } elseif ($this->container && $type && class_exists($type)) {
-                        try {
-                            $service = $this->container->get($type);
-                            $prop->setValue($controller, $service);
-                        } catch (Throwable $e) {
-                            // Could log missing service or ignore
-                        }
-                    }
-                }
-            }
+foreach ($rc->getProperties() as $prop) {
+    if ($prop->getAttributes(\Lento\Routing\Attributes\Inject::class)) {
+        $type = $prop->getType()?->getName();
+        $prop->setAccessible(true);
 
-            // Parameter injection (with #[Param] support)
+        if ($type === \Lento\Http\Request::class) {
+            $prop->setValue($controller, $req);
+        } elseif ($type === \Lento\Http\Response::class) {
+            $prop->setValue($controller, $res);
+        } elseif ($type === self::class) {
+            $prop->setValue($controller, $this);
+        } elseif ($this->container && $type && class_exists($type)) {
+            $service = $this->container->get($type);
+            if ($service === null) {
+                throw new \RuntimeException(
+                    "Dependency $type could not be injected into " . $rc->getName() . '::$' . $prop->getName()
+                );
+            }
+            $prop->setValue($controller, $service);
+        } else {
+            // Last resort: Don't set property, or throw.
+            throw new \RuntimeException(
+                "Cannot inject unknown type $type into " . $rc->getName() . '::$' . $prop->getName()
+            );
+        }
+    }
+}
+
+
+            // Method parameter injection (with validation)
             $rm = $rc->getMethod($methodName);
             $args = [];
             foreach ($rm->getParameters() as $param) {
-                $t = $param->getType()?->getName();
+                $paramType = $param->getType()?->getName();
 
-                if ($t === Request::class) {
+                // Inject Request/Response as-is
+                if ($paramType === Request::class) {
                     $args[] = $req;
-                } elseif ($t === Response::class) {
-                    $args[] = $res;
-                } else {
-                    // Check all parameter attributes
-                    $paramAttr =
-                        $param->getAttributes(Param::class)[0] ??
-                        $param->getAttributes(Route::class)[0] ??
-                        $param->getAttributes(Query::class)[0] ??
-                        $param->getAttributes(Body::class)[0] ?? null;
-
-                    // Determine source and name
-                    if ($paramAttr) {
-                        $attrName = $paramAttr->getName();
-                        $attrInstance = $paramAttr->newInstance();
-                        $key = $attrInstance->name ?? $param->getName();
-
-                        // Map class name to source
-                        $source = match ($attrName) {
-                            Param::class => $attrInstance->source ?? 'route',
-                            Route::class => 'route',
-                            Query::class => 'query',
-                            Body::class => 'body',
-                            default => 'route',
-                        };
-
-                        switch ($source) {
-                            case 'route':
-                                $args[] = $params[$key] ?? null;
-                                break;
-                            case 'query':
-                                $args[] = $req->query($key);
-                                break;
-                            case 'body':
-                                $paramType = $param->getType()?->getName();
-                                $bodyData = $req->body();
-                                if (class_exists($paramType) && is_array($bodyData)) {
-                                    $args[] = new $paramType($bodyData);
-                                } else {
-                                    $args[] = $bodyData[$key] ?? null;
-                                }
-                                break;
-                            default:
-                                $args[] = null;
-                        }
-                    } else {
-                        $args[] = null;
-                    }
+                    continue;
                 }
+                if ($paramType === Response::class) {
+                    $args[] = $res;
+                    continue;
+                }
+
+                // Attribute-driven resolution (Body/Query/Param)
+                $bodyAttr = $param->getAttributes(Body::class)[0] ?? null;
+                $queryAttr = $param->getAttributes(Query::class)[0] ?? null;
+                $routeAttr = $param->getAttributes(Param::class)[0]
+                    ?? $param->getAttributes(Route::class)[0] ?? null;
+
+                // 1. Body (JSON DTO)
+                if ($bodyAttr && $paramType && class_exists($paramType)) {
+                    $bodyData = $req->body();
+                    $dtoInstance = new $paramType($bodyData);
+
+                    // --- Validation here ---
+                    $validator = new \Lento\Validation\Validator();
+                    $errors = $validator->validate($dtoInstance);
+                    if ($errors) {
+                        throw new ValidationException("Validation failed", $errors);
+                    }
+                    $args[] = $dtoInstance;
+                    continue;
+                }
+
+                // 2. Query parameter (auto from request)
+                if ($queryAttr) {
+                    $attrInstance = $queryAttr->newInstance();
+                    $key = $attrInstance->name ?? $param->getName();
+                    $args[] = $req->query($key);
+                    continue;
+                }
+
+                // 3. Route parameter (from path)
+                if ($routeAttr) {
+                    $attrInstance = $routeAttr->newInstance();
+                    $key = $attrInstance->name ?? $param->getName();
+                    $args[] = $params[$key] ?? null;
+                    continue;
+                }
+
+                // 4. If no attribute but is a scalar type, try to inject from params or query
+                if ($paramType && in_array($paramType, ['string', 'int', 'float', 'bool'])) {
+                    $key = $param->getName();
+                    $val = $params[$key] ?? $req->query($key) ?? null;
+                    settype($val, $paramType);
+                    $args[] = $val;
+                    continue;
+                }
+
+                // 5. Fallback: null
+                $args[] = null;
             }
 
+            // Invoke controller method
             return $rm->invokeArgs($controller, $args);
         };
     }
+
+
 
     /**
      * Check if any routes are defined.

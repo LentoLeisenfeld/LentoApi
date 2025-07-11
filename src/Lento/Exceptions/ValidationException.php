@@ -4,43 +4,39 @@ namespace Lento\Exceptions;
 
 use Exception;
 use Throwable;
-
 use Lento\Enums\Message;
 
 /**
- * Undocumented class
+ * Thrown when input validation fails.
  */
 class ValidationException extends Exception
 {
     /**
-     * Undocumented variable
-     *
      * @var array
      */
     protected array $errors = [];
 
     /**
-     * Undocumented function
-     *
-     * @param [type] $message
+     * @param string|Message $message
      * @param array $errors
-     * @param integer $code
+     * @param int $code
      * @param Throwable|null $previous
      */
     public function __construct(
         $message = Message::ValidationFailed->value,
         array $errors = [],
-        $code = 0,
+        int $code = 422,
         Throwable $previous = null
     ) {
+        if ($message instanceof Message) {
+            $message = $message->value;
+        }
         parent::__construct($message, $code, $previous);
         $this->errors = $errors;
     }
 
     /**
-     * Returns validation error details
-     *
-     * @return array
+     * Returns validation error details.
      */
     public function getErrors(): array
     {

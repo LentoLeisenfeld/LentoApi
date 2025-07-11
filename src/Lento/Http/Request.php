@@ -102,10 +102,10 @@ class Request
      * Undocumented function
      *
      * @param string $key
-     * @param [type] $default
-     * @return void
+     * @param mixed $default
+     * @return mixed
      */
-    public function query(string $key, $default = null)
+    public function query(string $key, $default = null): mixed
     {
         return $this->query[$key] ?? $default;
     }
@@ -114,13 +114,13 @@ class Request
      * Undocumented function
      *
      * @param string|null $key
-     * @param [type] $default
-     * @return void
+     * @param mixed $default
+     * @return mixed
      */
     public function body(string $key = null, $default = null): mixed
     {
         if ($key === null) {
-            return $this->body; #ToDo??
+            return $this->body;
         }
         return $this->body[$key] ?? $default;
     }
@@ -129,10 +129,10 @@ class Request
      * Undocumented function
      *
      * @param string $key
-     * @param [type] $default
-     * @return void
+     * @param mixed $default
+     * @return mixed
      */
-    public function input(string $key, $default = null)
+    public function input(string $key, $default = null): mixed
     {
         return $this->body($key, $default);
     }

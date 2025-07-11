@@ -53,4 +53,14 @@ class Container
         }
         throw new Exception("Service '$className' not registered");
     }
+
+    public function has(string $class): bool
+    {
+        try {
+            $this->get($class);
+            return true;
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
 }
