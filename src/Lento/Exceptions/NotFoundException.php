@@ -3,13 +3,37 @@
 namespace Lento\Exceptions;
 
 use Exception;
+use Throwable;
 
+use Lento\Enums\Message;
+
+/**
+ * Undocumented class
+ */
 class NotFoundException extends Exception
 {
-    protected $message = 'Resource not found';
+    /**
+     * Undocumented variable
+     *
+     * @var [type]
+     */
+    protected $message = Message::NotFound->value;
+
+    /**
+     * Undocumented variable
+     *
+     * @var integer
+     */
     protected $code = 404;
 
-    public function __construct(string $message = null, int $code = 404, \Throwable $previous = null)
+    /**
+     * Undocumented function
+     *
+     * @param string|null $message
+     * @param integer $code
+     * @param Throwable|null $previous
+     */
+    public function __construct(string $message = null, int $code = 404, Throwable $previous = null)
     {
         if ($message === null) {
             $message = $this->message;

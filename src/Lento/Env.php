@@ -2,8 +2,17 @@
 
 namespace Lento;
 
+/**
+ * Undocumented class
+ */
 final class Env
 {
+    /**
+     * Undocumented function
+     *
+     * @param [type] $dir
+     * @return void
+     */
     public static function load(string $dir = __DIR__): void
     {
         $basePath = rtrim($dir, '/\\');
@@ -25,6 +34,12 @@ final class Env
         }
     }
 
+    /**
+     * Undocumented function
+     *
+     * @param string $file
+     * @return void
+     */
     private static function parseFile(string $file): void
     {
         $handle = @fopen($file, 'r');
@@ -60,6 +75,11 @@ final class Env
         fclose($handle);
     }
 
+    /**
+     * Undocumented function
+     *
+     * @return string
+     */
     private static function detectEnvironment(): string
     {
         static $result;
@@ -83,11 +103,23 @@ final class Env
         return $result = 'production';
     }
 
+    /**
+     * Undocumented function
+     *
+     * @return boolean
+     */
     public static function isDev(): bool
     {
         return ($_ENV['APP_ENV'] ?? $_SERVER['APP_ENV'] ?? 'production') === 'development';
     }
 
+    /**
+     * Undocumented function
+     *
+     * @param string $key
+     * @param mixed $default
+     * @return mixed
+     */
     public static function get(string $key, mixed $default = null): mixed
     {
         return $_ENV[$key] ?? $_SERVER[$key] ?? $default;

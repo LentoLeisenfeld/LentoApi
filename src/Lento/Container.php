@@ -2,15 +2,24 @@
 
 namespace Lento;
 
-use Lento\Attributes\Inject;
+use ReflectionClass;
+use Exception;
 
+/**
+ * Undocumented class
+ */
 class Container
 {
-    /** @var array<string,object> */
+    /**
+     * Undocumented variable
+     *
+     * @var array<string,object>
+     */
     private array $services = [];
 
     /**
      * Register a service instance under its class name.
+     *
      * @param object $service
      */
     public function set(object $service): void
@@ -20,10 +29,11 @@ class Container
 
     /**
      * Get a service by class name. Auto-instantiate if not registered.
+     *
      * @template T
      * @param class-string<T> $className
      * @return T
-     * @throws \Exception
+     * @throws Exception
      */
     public function get(string $className)
     {
@@ -33,7 +43,7 @@ class Container
         }
         // Auto-wire concrete classes
         if (class_exists($className)) {
-            $reflect = new \ReflectionClass($className);
+            $reflect = new ReflectionClass($className);
             // For simple classes without constructor or with optional params
             if (!$reflect->getConstructor() || $reflect->getConstructor()->getNumberOfRequiredParameters() === 0) {
                 $instance = $reflect->newInstance();
@@ -41,6 +51,6 @@ class Container
                 return $instance;
             }
         }
-        throw new \Exception("Service '$className' not registered");
+        throw new Exception("Service '$className' not registered");
     }
 }

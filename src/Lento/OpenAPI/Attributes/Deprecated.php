@@ -1,22 +1,25 @@
 <?php
 
-namespace Lento\Attributes;
+namespace Lento\OpenAPI\Attributes;
 
 use Attribute;
 
 /**
- * Marks a controller method as deprecated in Swagger documentation.
+ * Marks a controller method as deprecated in OpenAPI documentation.
  */
 #[Attribute(Attribute::TARGET_METHOD)]
 class Deprecated
 {
     /**
      * Optional deprecation message or version.
+     *
      * @var string|null
      */
     public ?string $message;
 
     /**
+     * Undocumented
+     *
      * @param string|null $message Additional information about the deprecation (e.g. replacement or version).
      */
     public function __construct(?string $message = null)
@@ -26,6 +29,7 @@ class Deprecated
 
     /**
      * Get the deprecation message.
+     *
      * @return string|null
      */
     public function getMessage(): ?string

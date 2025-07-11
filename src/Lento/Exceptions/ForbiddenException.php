@@ -2,12 +2,38 @@
 
 namespace Lento\Exceptions;
 
-class ForbiddenException extends \Exception
+use Exception;
+use Throwable;
+
+use Lento\Enums\Message;
+
+/**
+ * Undocumented class
+ */
+class ForbiddenException extends Exception
 {
-    protected $message = 'Forbidden';
+    /**
+     * Undocumented variable
+     *
+     * @var [type]
+     */
+    protected $message = Message::Forbidden->value;
+
+    /**
+     * Undocumented variable
+     *
+     * @var integer
+     */
     protected $code = 403;
 
-    public function __construct(string $message = null, int $code = 403, \Throwable $previous = null)
+    /**
+     * Undocumented function
+     *
+     * @param string|null $message
+     * @param integer $code
+     * @param Throwable|null $previous
+     */
+    public function __construct(string $message = null, int $code = 403, Throwable $previous = null)
     {
         if ($message === null) {
             $message = $this->message;

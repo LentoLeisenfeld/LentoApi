@@ -1,6 +1,6 @@
 <?php
 
-namespace Lento\Attributes;
+namespace Lento\Routing\Attributes;
 
 use Attribute;
 
@@ -12,11 +12,14 @@ class Service
 {
     /**
      * Optional alias for the service (defaults to class name).
+     *
      * @var string|null
      */
     public ?string $alias;
 
     /**
+     * Undocumented Variable
+     *
      * @param string|null $alias An optional alias to register the service under.
      */
     public function __construct(?string $alias = null)
@@ -26,6 +29,7 @@ class Service
 
     /**
      * Get the service alias, or the class name if none provided.
+     *
      * @param string $className
      * @return string
      */

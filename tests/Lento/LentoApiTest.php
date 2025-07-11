@@ -3,7 +3,7 @@
 use PHPUnit\Framework\TestCase;
 use Lento\LentoApi;
 use Lento\Attributes\Controller;
-use Lento\Attributes\Methods\Get;
+use Lento\Http\Attributes\Get;
 use Lento\Http\{Request, Response};
 
 #[Controller('/hello')]

@@ -2,8 +2,14 @@
 
 namespace Lento;
 
+use ReflectionClass;
+
 use Lento\Routing\{Router, RouteCache};
-use Lento\Swagger\SwaggerController;
+use Lento\Routing\Attributes\Controller;
+
+use Lento\Formatter\Attributes\{FileFormatter, JSONFormatter, SimpleXmlFormatter};
+
+use Lento\OpenAPI\OpenAPIController;
 use Lento\Http\{Request, Response};
 
 /**
@@ -11,42 +17,57 @@ use Lento\Http\{Request, Response};
  */
 class LentoApi
 {
-    /** @var Router */
+    /**
+     * Undocumented variable
+     *
+     * @var Router
+     */
     private Router $router;
 
-    /** @var string */
+    /**
+     * Undocumented variable
+     *
+     * @var string
+     */
     private string $cacheFile = '';
 
-    /** @var callable */
-    private $dispatcher;
-
-    /** @var callable[] */
+    /**
+     * Undocumented variable
+     *
+     * @var callable[]
+     */
     private array $middlewares = [];
 
-    /** @var Container */
+    /**
+     * Undocumented variable
+     *
+     * @var Container
+     */
     private Container $container;
 
     /**
+     * Undocumented function
+     *
      * @param array<class-string> $controllers
      * @param array<class-string> $services
      * @param string|null $cacheFile Path to route cache file
      */
     public function __construct(array $controllers, array $services, string $cacheFile = null)
     {
-        if (Env::isDev()) {
-            $controllers[] = SwaggerController::class;
+        if (Env::isDev() && OpenAPI::isEnabled()) {
+            $controllers[] = OpenAPIController::class;
         }
 
         $this->initDependencyInjection($services);
 
         $this->initRouter($controllers, $cacheFile);
-
-        // Default dispatcher uses router
-        $this->dispatcher = fn(Request $req, Response $res) => $this->handle($req, $res);
     }
 
     /**
      * Register a middleware to the stack.
+     *
+     * @param callable $middleware
+     * @return self
      */
     public function use(callable $middleware): self
     {
@@ -56,7 +77,9 @@ class LentoApi
 
     /**
      * Add simple CORS support via middleware.
+     *
      * @param array<string,mixed> $options
+     * @return self
      */
     public function useCors(array $options): self
     {
@@ -77,24 +100,28 @@ class LentoApi
 
     /**
      * Dispatch logic using fast Router.
+     *
+     * @param Request $req
+     * @param Response $res
+     * @return Response
      */
     private function handle(Request $req, Response $res): Response
     {
-        $result = $this->router->dispatch(
+        $this->router->dispatch(
             $req->path,
             $req->method,
             $req,
             $res
         );
-        if ($result !== null) {
-            $res->write(json_encode($result));
-            return $res;
-        }
-        return $this->defaultNotFound($req, $res);
+        // dispatch already sent/written the response
+        return $res;
     }
 
     /**
      * Instantiate service classes and set up the DI container.
+     *
+     * @param array $services
+     * @return void
      */
     private function initDependencyInjection(array $services): void
     {
@@ -107,25 +134,35 @@ class LentoApi
 
     /**
      * Router setup with optimized data-only cache.
+     *
+     * @param array $controllers
+     * @param string|null $cacheFile
+     * @return void
      */
-    private function initRouter($controllers, $cacheFile = null)
+    private function initRouter(array $controllers, ?string $cacheFile = null): void
     {
-        $this->cacheFile = $cacheFile ?? __DIR__ . '/../cache/routes.php';
+        // Set directory if $cacheFile is custom
+        if ($cacheFile) {
+            RouteCache::setDirectory(dirname($cacheFile));
+        }
+
+        $this->cacheFile = $cacheFile ?? RouteCache::getDefaultRouteFile();
+
         $this->router = new Router();
         $this->router->setContainer($this->container);
 
-        if (file_exists($this->cacheFile)) {
-            // Load cached routes directly (no reflection, pure data, very fast)
+        if (RouteCache::isAvailable($controllers)) {
             RouteCache::loadToRouter($this->router);
         } else {
-            // Build routes as usual, then store pure-data cache for next time
             $this->registerAttributeRoutes($controllers);
-            RouteCache::storeFromRouter($this->router);
+            RouteCache::storeFromRouter($this->router, $controllers);
         }
     }
 
     /**
      * Get the Router instance.
+     *
+     * @return Router
      */
     public function getRouter(): Router
     {
@@ -134,6 +171,7 @@ class LentoApi
 
     /**
      * Retrieve a service instance from the DI container.
+     *
      * @template T
      * @param class-string<T> $className
      * @return T|null
@@ -149,45 +187,68 @@ class LentoApi
 
     /**
      * Scan controllers for attribute-based routes, honoring class-level prefix.
+     *
+     * @param [type] $controllers
+     * @return void
      */
     private function registerAttributeRoutes($controllers): void
     {
         foreach ($controllers as $className) {
-            $rc = new \ReflectionClass($className);
+            $rc = new ReflectionClass($className);
 
-            // 1) Class-level prefix via #[Controller('/prefix')]
+            // Class-level prefix via #[Controller('/prefix')]
             $prefix = '';
-            foreach ($rc->getAttributes(\Lento\Attributes\Controller::class) as $classAttr) {
+            foreach ($rc->getAttributes(Controller::class) as $classAttr) {
                 $cp = $classAttr->newInstance()->getPath();
                 $prefix = $cp !== '' ? '/' . trim($cp, '/') : '';
                 break;
             }
 
-            // 2) Iterate over method attributes (Get, Post, etc.)
             foreach ($rc->getMethods() as $method) {
+                $routeAttr = null;
+                $formatterAttr = null;
+
                 foreach ($method->getAttributes() as $attr) {
-                    $info = $attr->newInstance();
+                    $instance = $attr->newInstance();
 
-                    // Method-level path or default to method name
-                    $methodPath = $info->getPath() ?: $method->getName();
+                    // Routing attribute (Get, Post, etc)
+                    if (method_exists($instance, 'getPath') && method_exists($instance, 'getHttpMethod')) {
+                        $routeAttr = $instance;
+                    }
 
-                    // Combine prefix + methodPath, normalize slashes
+                    // Formatter attribute
+                    if (
+                        $instance instanceof FileFormatter ||
+                        $instance instanceof SimpleXmlFormatter ||
+                        $instance instanceof JSONFormatter
+                    ) {
+                        $formatterAttr = $instance;
+                    }
+                }
+
+                if ($routeAttr) {
+                    $methodPath = $routeAttr->getPath() ?: $method->getName();
                     $combined = rtrim($prefix, '/') . '/' . ltrim($methodPath, '/');
                     $path = '/' . trim($combined, '/');
-
-                    // Register the route
                     $this->router->addRoute(
-                        $info->getHttpMethod(),
+                        $routeAttr->getHttpMethod(),
                         $path,
-                        [$className, $method->getName()]
+                        [$className, $method->getName()],
+                        $formatterAttr // Can be null
                     );
                 }
             }
         }
     }
 
+
+
     /**
      * Default 404 response.
+     *
+     * @param Request $req
+     * @param Response $res
+     * @return Response
      */
     private function defaultNotFound(Request $req, Response $res): Response
     {
@@ -198,6 +259,8 @@ class LentoApi
 
     /**
      * Start serving requests, applying middleware stack.
+     *
+     * @return void
      */
     public function start(): void
     {
@@ -209,7 +272,7 @@ class LentoApi
             array_reverse($this->middlewares),
             fn(callable $next, callable $mw): callable =>
             fn(Request $req, Response $res) => $mw($req, $res, $next),
-            $this->dispatcher
+            fn(Request $req, Response $res) => $this->handle($req, $res)
         );
 
         // Execute pipeline and capture returned Response

@@ -1,20 +1,34 @@
 <?php
 
-namespace Lento\Swagger;
+namespace Lento\OpenAPI;
 
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionNamedType;
-use Lento\Attributes\{Ignore, Property, Param, Deprecated};
-use Lento\Routing\Router;
-use Lento\Http\Request;
-use Lento\Http\Response;
-use Lento\Swagger;
 
-class SwaggerGenerator
+use Lento\OpenAPI;
+use Lento\OpenAPI\Attributes\{Ignore, Property};
+use Lento\Routing\Router;
+use Lento\Routing\Attributes\Param;
+
+/**
+ * OpenAPI Generator (patched to include scalar/simple endpoints)
+ */
+class OpenAPIGenerator
 {
+    /**
+     * @var Router
+     */
     private Router $router;
+
+    /**
+     * @var array<string,bool>
+     */
     private array $processedModels = [];
+
+    /**
+     * @var array
+     */
     private array $components = [
         'schemas' => [],
         'securitySchemes' => [],
@@ -25,17 +39,13 @@ class SwaggerGenerator
         $this->router = $router;
     }
 
-    /**
-     * Generate complete OpenAPI spec.
-     * @return array
-     */
     public function generate(): array
     {
-        $options = Swagger::getOptions();
+        $options = OpenAPI::getOptions();
 
         return array_filter([
             'openapi' => '3.0.0',
-            'info' => Swagger::getInfo(),
+            'info' => OpenAPI::getInfo(),
             'paths' => $this->buildPaths(),
             'components' => $this->components,
             'security' => $options->security ?: null,
@@ -44,46 +54,45 @@ class SwaggerGenerator
         ]);
     }
 
-    /**
-     * Build path definitions from router's routes.
-     * @return array<string,array<string,mixed>>
-     */
     protected function buildPaths(): array
-    {
-        $paths = [];
+{
+    $paths = [];
 
-        // Iterate over all routes provided by the router
-        foreach ($this->router->getRoutes() as $route) {
-            // Normalize route descriptor (object or array)
-            $handlerSpec = is_array($route) ? ($route['handlerSpec'] ?? null) : ($route->handlerSpec ?? null);
-            if (!is_array($handlerSpec) || count($handlerSpec) !== 2) {
-                continue;
-            }
-            [$controllerClass, $methodName] = $handlerSpec;
+    foreach ($this->router->getRoutes() as $route) {
+        // PATCH: handle stdClass with handlerSpec as array
+        $handlerSpec = null;
+        if (is_object($route) && is_array($route->handlerSpec) && isset($route->handlerSpec['spec'])) {
+            $handlerSpec = $route->handlerSpec['spec'];
+        } elseif (is_array($route) && isset($route['handlerSpec']['spec'])) {
+            $handlerSpec = $route['handlerSpec']['spec'];
+        }
+        if (!is_array($handlerSpec) || count($handlerSpec) !== 2) continue;
+        [$controllerClass, $methodName] = $handlerSpec;
 
-            $methodRef = is_array($route) ? ($route['method'] ?? null) : ($route->method ?? null);
-            $rawPath = is_array($route) ? ($route['rawPath'] ?? null) : ($route->rawPath ?? null);
-            if (!$methodRef || !$rawPath) {
-                continue;
-            }
+        $methodRef = is_object($route) ? ($route->method ?? null) : ($route['method'] ?? null);
+        $rawPath = is_object($route) ? ($route->rawPath ?? null) : ($route['rawPath'] ?? null);
+        if (!$methodRef || !$rawPath) continue;
 
-            $refClass = new ReflectionClass($controllerClass);
-            $refMethod = $refClass->getMethod($methodName);
-
-            if ($this->isIgnored($refClass, $refMethod)) {
-                continue;
-            }
-
-            $httpMethod = strtolower($methodRef);
-            $path = $rawPath;
-
-            $operation = $this->buildOperation($refMethod);
-
-            $paths[$path][$httpMethod] = $operation;
+        if (!$controllerClass || !class_exists($controllerClass)) {
+            error_log("OpenAPIGenerator: Controller class '$controllerClass' does not exist (route '$rawPath'). Skipping.");
+            continue;
         }
 
-        return $paths;
+        $refClass = new \ReflectionClass($controllerClass);
+        if (!$refClass->hasMethod($methodName)) continue;
+        $refMethod = $refClass->getMethod($methodName);
+
+        if ($this->isIgnored($refClass, $refMethod)) continue;
+
+        $httpMethod = strtolower($methodRef);
+        $operation = $this->buildOperation($refMethod);
+
+        $paths[$rawPath][$httpMethod] = $operation;
     }
+
+    return $paths;
+}
+
 
 
     protected function isIgnored(ReflectionClass $refClass, ReflectionMethod $refMethod): bool
@@ -92,16 +101,12 @@ class SwaggerGenerator
             || (bool) $refMethod->getAttributes(Ignore::class);
     }
 
-    /**
-     * Build the operation object for a given controller method.
-     */
     protected function buildOperation(ReflectionMethod $method): array
     {
         [$parameters, $requestBody, $schemas] = $this->extractParameters($method);
 
-        // Register component schemas for complex types
         foreach ($schemas as $name => $fqcn) {
-            if (!isset($this->processedModels[$name])) {
+            if (!isset($this->processedModels[$name]) && class_exists($fqcn)) {
                 $this->components['schemas'][$name] = $this->generateModelSchema($fqcn);
                 $this->processedModels[$name] = true;
             }
@@ -109,24 +114,27 @@ class SwaggerGenerator
 
         $responses = $this->getResponseSchemas($method);
 
-        // Build and filter operation array
+        // Patch: always include empty arrays for 'parameters' and 'responses'
         $operation = array_filter([
             'summary' => ucfirst($method->getName()),
             'operationId' => $method->getDeclaringClass()->getShortName() . '_' . $method->getName(),
             'tags' => [$method->getDeclaringClass()->getShortName()],
-            'parameters' => $parameters,
+            'parameters' => $parameters ?: [],
             'requestBody' => $requestBody,
-            'responses' => $responses,
-            'deprecated' => $method->isDeprecated(),
+            'responses' => $responses ?: [],
+            'deprecated' => $method->isDeprecated() ?: null,
             'security' => $this->getSecurity($method),
             'externalDocs' => $this->getExternalDocs($method),
-        ]);
+        ], function ($v) {
+            return $v !== null;
+        });
 
         return $operation;
     }
 
     /**
      * Extract path parameters and request body schemas.
+     *
      * @return array{array,array|null,array}
      */
     protected function extractParameters(ReflectionMethod $method): array
@@ -143,8 +151,15 @@ class SwaggerGenerator
             }
             $typeName = $type->getName();
 
+            if (!$typeName) {
+                continue;
+            }
+
             if (!$type->isBuiltin()) {
-                // Complex object => requestBody
+                if (!class_exists($typeName)) {
+                    error_log("OpenAPIGenerator: Parameter type '$typeName' does not exist (method {$method->getName()}). Skipping.");
+                    continue;
+                }
                 $short = (new ReflectionClass($typeName))->getShortName();
                 $schemas[$short] = $typeName;
                 $requestBody = [
@@ -154,7 +169,6 @@ class SwaggerGenerator
                     ],
                 ];
             } elseif ($hasParamAttr) {
-                // Path parameter
                 $params[] = [
                     'name' => $param->getName(),
                     'in' => 'path',
@@ -169,20 +183,33 @@ class SwaggerGenerator
 
     /**
      * Get response schemas for method return type.
+     *
+     * @param ReflectionMethod $method
+     * @return array
      */
     protected function getResponseSchemas(ReflectionMethod $method): array
     {
         $responses = [];
         $returnType = $method->getReturnType();
 
-        if ($returnType instanceof ReflectionNamedType && !$returnType->isBuiltin()) {
-            $fqcn = $returnType->getName();
-            $short = (new ReflectionClass($fqcn))->getShortName();
-            if (!isset($this->processedModels[$short])) {
-                $this->components['schemas'][$short] = $this->generateModelSchema($fqcn);
-                $this->processedModels[$short] = true;
+        if ($returnType instanceof ReflectionNamedType) {
+            $typeName = $returnType->getName();
+
+            if (!$returnType->isBuiltin()) {
+                if ($typeName && class_exists($typeName)) {
+                    $short = (new ReflectionClass($typeName))->getShortName();
+                    if (!isset($this->processedModels[$short])) {
+                        $this->components['schemas'][$short] = $this->generateModelSchema($typeName);
+                        $this->processedModels[$short] = true;
+                    }
+                    $schema = ['$ref' => "#/components/schemas/$short"];
+                } else {
+                    $schema = ['type' => 'object'];
+                }
+            } else {
+                // Patch: correct OpenAPI type for scalar return
+                $schema = ['type' => $this->mapType($typeName)];
             }
-            $schema = ['$ref' => "#/components/schemas/$short"];
         } else {
             $schema = ['type' => 'object'];
         }
@@ -195,11 +222,12 @@ class SwaggerGenerator
         return $responses;
     }
 
-    /**
-     * Generate a JSON schema for a model class.
-     */
     protected function generateModelSchema(string $fqcn): array
     {
+        if (!$fqcn || !class_exists($fqcn)) {
+            error_log("OpenAPIGenerator: generateModelSchema - class '$fqcn' does not exist.");
+            return ['type' => 'object', 'properties' => []];
+        }
         $rc = new ReflectionClass($fqcn);
         $schema = ['type' => 'object', 'properties' => [], 'required' => []];
 
@@ -214,9 +242,18 @@ class SwaggerGenerator
             }
             $typeName = $type->getName();
 
+            if (!$typeName) {
+                error_log("OpenAPIGenerator: Property '$name' in class '{$rc->getName()}' has no type. Skipping.");
+                continue;
+            }
+
             if ($type->isBuiltin()) {
                 $schema['properties'][$name] = ['type' => $this->mapType($typeName)];
             } else {
+                if (!class_exists($typeName)) {
+                    error_log("OpenAPIGenerator: Property type '$typeName' does not exist (property '$name' in class '{$rc->getName()}'). Skipping.");
+                    continue;
+                }
                 $short = (new ReflectionClass($typeName))->getShortName();
                 $schema['properties'][$name] = ['$ref' => "#/components/schemas/$short"];
                 if (!isset($this->processedModels[$short])) {
@@ -230,9 +267,6 @@ class SwaggerGenerator
         return $schema;
     }
 
-    /**
-     * Map PHP type to JSON schema type.
-     */
     protected function mapType(string $phpType): string
     {
         return match ($phpType) {

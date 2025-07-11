@@ -1,37 +1,32 @@
 <?php
 
-namespace Lento;
+namespace Lento\Logging;
 
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Psr\Log\LogLevel;
 
-class LoggerOptions
-{
-    /**
-     * @var string[] List of PSR-3 log levels accepted by this logger, e.g. ['info','error']
-     */
-    public array $levels = [];
-    /** @var string|null Channel or name (optional) */
-    public ?string $name = null;
+use Lento\Logging\LoggerOptions;
 
-    public function __construct(array $levels = [], ?string $name = null)
-    {
-        $this->levels = $levels;
-        $this->name = $name;
-    }
-}
-
+/**
+ * Undocumented class
+ */
 class Logger
 {
     /**
      * Each entry: ['logger'=>LoggerInterface, 'levels'=>array (assoc), 'name'=>string|null]
+     *
+     * @var array
      */
     private static array $loggers = [];
 
     /**
      * Add one or more loggers (LoggerInterface), with flexible options:
      * - options can be LoggerOptions, string (level), array (levels), or assoc array.
+     *
+     * @param [type] $logger
+     * @param [type] $options
+     * @return void
      */
     public static function add($logger, $options = null): void
     {
@@ -56,10 +51,18 @@ class Logger
 
         // Convert levels to associative map for O(1) lookup
         $levelMap = [];
-        foreach ($opts->levels ?: [
-            LogLevel::EMERGENCY, LogLevel::ALERT, LogLevel::CRITICAL, LogLevel::ERROR,
-            LogLevel::WARNING, LogLevel::NOTICE, LogLevel::INFO, LogLevel::DEBUG
-        ] as $lvl) {
+        foreach (
+            $opts->levels ?: [
+                LogLevel::EMERGENCY,
+                LogLevel::ALERT,
+                LogLevel::CRITICAL,
+                LogLevel::ERROR,
+                LogLevel::WARNING,
+                LogLevel::NOTICE,
+                LogLevel::INFO,
+                LogLevel::DEBUG
+            ] as $lvl
+        ) {
             $levelMap[$lvl] = true;
         }
 
@@ -68,7 +71,7 @@ class Logger
                 self::$loggers[] = [
                     'logger' => $lg,
                     'levels' => $levelMap,
-                    'name'   => $opts->name,
+                    'name' => $opts->name,
                 ];
             }
         }
@@ -98,25 +101,34 @@ class Logger
     private static function getLoggers(): array
     {
         if (empty(self::$loggers)) {
-            return [[
-                'logger' => new NullLogger(),
-                'levels' => [
-                    LogLevel::EMERGENCY => true,
-                    LogLevel::ALERT     => true,
-                    LogLevel::CRITICAL  => true,
-                    LogLevel::ERROR     => true,
-                    LogLevel::WARNING   => true,
-                    LogLevel::NOTICE    => true,
-                    LogLevel::INFO      => true,
-                    LogLevel::DEBUG     => true,
-                ],
-                'name'   => null
-            ]];
+            return [
+                [
+                    'logger' => new NullLogger(),
+                    'levels' => [
+                        LogLevel::EMERGENCY => true,
+                        LogLevel::ALERT => true,
+                        LogLevel::CRITICAL => true,
+                        LogLevel::ERROR => true,
+                        LogLevel::WARNING => true,
+                        LogLevel::NOTICE => true,
+                        LogLevel::INFO => true,
+                        LogLevel::DEBUG => true,
+                    ],
+                    'name' => null
+                ]
+            ];
         }
         return self::$loggers;
     }
 
-    /** Generic log dispatch to all loggers accepting this level */
+    /**
+     * Generic log dispatch to all loggers accepting this level
+     *
+     * @param [type] $level
+     * @param [type] $message
+     * @param array $context
+     * @return void
+     */
     public static function log($level, $message, array $context = []): void
     {
         foreach (self::getLoggers() as $entry) {
@@ -126,42 +138,108 @@ class Logger
         }
     }
 
-    // Proxy PSR log level methods
-
+    /**
+     * Undocumented function
+     *
+     * @param [type] $message
+     * @param array $context
+     * @return void
+     */
     public static function emergency($message, array $context = []): void
     {
         self::log(LogLevel::EMERGENCY, $message, $context);
     }
+
+    /**
+     * Undocumented function
+     *
+     * @param [type] $message
+     * @param array $context
+     * @return void
+     */
     public static function alert($message, array $context = []): void
     {
         self::log(LogLevel::ALERT, $message, $context);
     }
+
+    /**
+     * Undocumented function
+     *
+     * @param [type] $message
+     * @param array $context
+     * @return void
+     */
     public static function critical($message, array $context = []): void
     {
         self::log(LogLevel::CRITICAL, $message, $context);
     }
+
+    /**
+     * Undocumented function
+     *
+     * @param [type] $message
+     * @param array $context
+     * @return void
+     */
     public static function error($message, array $context = []): void
     {
         self::log(LogLevel::ERROR, $message, $context);
     }
+
+    /**
+     * Undocumented function
+     *
+     * @param [type] $message
+     * @param array $context
+     * @return void
+     */
     public static function warning($message, array $context = []): void
     {
         self::log(LogLevel::WARNING, $message, $context);
     }
+
+    /**
+     * Undocumented function
+     *
+     * @param [type] $message
+     * @param array $context
+     * @return void
+     */
     public static function notice($message, array $context = []): void
     {
         self::log(LogLevel::NOTICE, $message, $context);
     }
+
+    /**
+     * Undocumented function
+     *
+     * @param [type] $message
+     * @param array $context
+     * @return void
+     */
     public static function info($message, array $context = []): void
     {
         self::log(LogLevel::INFO, $message, $context);
     }
+
+    /**
+     * Undocumented function
+     *
+     * @param [type] $message
+     * @param array $context
+     * @return void
+     */
     public static function debug($message, array $context = []): void
     {
         self::log(LogLevel::DEBUG, $message, $context);
     }
 
-    /** Remove all registered loggers */
+
+    /**
+     * Remove all registered loggers
+     *
+     * @return void
+     */
     public static function clear(): void
     {
         self::$loggers = [];
