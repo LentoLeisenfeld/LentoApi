@@ -25,7 +25,7 @@ class LentoApiTest extends TestCase {
         $routes = $router->getRoutes();
 
         ob_start();
-        $api->start();
+        $api->run();
         $output = ob_get_clean();
 
 
@@ -42,7 +42,7 @@ class LentoApiTest extends TestCase {
         $api = new LentoApi(controllers: [DummyController::class]);
 
         ob_start();
-        $api->start();
+        $api->run();
         $output = ob_get_clean();
 
         $this->assertStringContainsString('Hello', $output);
