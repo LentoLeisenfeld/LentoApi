@@ -81,13 +81,19 @@ class RouteCache
         }
 
         $storedMeta = @require $metaFile;
-        if (!is_array($storedMeta)) return false;
+        if (!is_array($storedMeta)) {
+            return false;
+        }
 
         foreach ($controllers as $controller) {
-            if (!class_exists($controller)) continue;
+            if (!class_exists($controller)) {
+                continue;
+            }
             $rc = new \ReflectionClass($controller);
             $file = $rc->getFileName();
-            if (!$file || !file_exists($file)) return false;
+            if (!$file || !file_exists($file)) {
+                return false;
+            }
             $mtime = filemtime($file);
             if (!isset($storedMeta[$file]) || $storedMeta[$file] !== $mtime) {
                 return false;
@@ -97,15 +103,17 @@ class RouteCache
     }
 
     /**
-      * Loads the routes from cache into the router.
-      *
-      * @param Router $router
-      * @return void
-      */
+     * Loads the routes from cache into the router.
+     *
+     * @param Router $router
+     * @return void
+     */
     public static function loadToRouter(Router $router): void
     {
         $routeFile = self::getDefaultRouteFile();
-        if (!file_exists($routeFile)) return;
+        if (!file_exists($routeFile)) {
+            return;
+        }
         $data = require $routeFile;
         $router->importCacheData($data);
     }
@@ -117,19 +125,25 @@ class RouteCache
      * @param array $controllers
      * @return void
      */
-    public static function storeFromRouter(Router $router, array $controllers): void
+    public static function storeFromRouter(Router $router, array $controllers, array $serviceClasses): void
     {
         $dir = self::getDirectory();
         if (!is_dir($dir)) {
             mkdir($dir, 0777, true);
         }
         $data = $router->exportCacheData();
+
+        // Add services to the route data
+        $data['services'] = $serviceClasses;
+
         $header = "<?php\n// AUTO-GENERATED FILE - DO NOT EDIT\n\n";
         file_put_contents($dir . '/' . self::ROUTE_FILE, $header . 'return ' . var_export($data, true) . ';');
 
         $meta = [];
         foreach ($controllers as $controller) {
-            if (!class_exists($controller)) continue;
+            if (!class_exists($controller)) {
+                continue;
+            }
             $rc = new \ReflectionClass($controller);
             $file = $rc->getFileName();
             if ($file && file_exists($file)) {

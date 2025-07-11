@@ -3,12 +3,9 @@
 namespace Lento;
 
 use ReflectionClass;
-
 use Lento\Routing\{Router, RouteCache};
 use Lento\Routing\Attributes\Controller;
-
 use Lento\Formatter\Attributes\{FileFormatter, JSONFormatter, SimpleXmlFormatter};
-
 use Lento\OpenAPI\OpenAPIController;
 use Lento\Http\{Request, Response};
 
@@ -49,18 +46,15 @@ class LentoApi
      * Undocumented function
      *
      * @param array<class-string> $controllers
-     * @param array<class-string> $services
-     * @param string|null $cacheFile Path to route cache file
      */
-    public function __construct(array $controllers, array $services, string $cacheFile = null)
+    public function __construct(array $controllers)
     {
         if (Env::isDev() && OpenAPI::isEnabled()) {
             $controllers[] = OpenAPIController::class;
         }
 
-        $this->initDependencyInjection($services);
-
-        $this->initRouter($controllers, $cacheFile);
+        $this->initDependencyInjection($controllers);
+        $this->initRouter($controllers);
     }
 
     /**
@@ -123,10 +117,12 @@ class LentoApi
      * @param array $services
      * @return void
      */
-    private function initDependencyInjection(array $services): void
+    private function initDependencyInjection(array $allClasses): void
     {
         $this->container = new Container();
-        foreach ($services as $cls) {
+        foreach ($allClasses as $cls) {
+            if (!class_exists($cls))
+                continue;
             $instance = new $cls();
             $this->container->set($instance);
         }
@@ -139,24 +135,77 @@ class LentoApi
      * @param string|null $cacheFile
      * @return void
      */
-    private function initRouter(array $controllers, ?string $cacheFile = null): void
+    private function initRouter(array $controllers): void
     {
-        // Set directory if $cacheFile is custom
-        if ($cacheFile) {
-            RouteCache::setDirectory(dirname($cacheFile));
-        }
-
-        $this->cacheFile = $cacheFile ?? RouteCache::getDefaultRouteFile();
-
         $this->router = new Router();
-        $this->router->setContainer($this->container);
+        // No container yet!
 
         if (RouteCache::isAvailable($controllers)) {
-            RouteCache::loadToRouter($this->router);
+            $data = require RouteCache::getDefaultRouteFile();
+            // Setup DI container with all services saved in cache
+            $serviceClasses = $data['services'] ?? [];
+            $this->initDependencyInjection($serviceClasses);
+            $this->router->setContainer($this->container);
+            // Now import the cached routes
+            $this->router->importCacheData($data);
         } else {
+            // Full cold start: discover services, set up container, register routes, store cache
+            $allClasses = $this->discoverAllClasses($controllers);
+            $this->initDependencyInjection($allClasses);
+            $this->router->setContainer($this->container);
             $this->registerAttributeRoutes($controllers);
-            RouteCache::storeFromRouter($this->router, $controllers);
+            // Store to cache with services
+            RouteCache::storeFromRouter($this->router, $controllers, $allClasses);
         }
+    }
+
+    /**
+     * Recursively discovers all required classes (controllers + injected services).
+     * @param string[] $controllers  List of root controller class names
+     * @return string[]              All unique class names for DI
+     */
+    private function discoverAllClasses(array $controllers): array
+    {
+        $allClasses = $controllers;
+        $queue = $controllers;
+        $discovered = [];
+
+        while ($queue) {
+            $class = array_shift($queue);
+            if (!class_exists($class) || isset($discovered[$class])) {
+                continue;
+            }
+            $discovered[$class] = true;
+
+            $rc = new \ReflectionClass($class);
+
+            // Scan #[Inject] properties
+            foreach ($rc->getProperties() as $prop) {
+                foreach ($prop->getAttributes(\Lento\Routing\Attributes\Inject::class) as $attr) {
+                    $type = $prop->getType()?->getName();
+                    if ($type && !in_array($type, $allClasses, true)) {
+                        $allClasses[] = $type;
+                        $queue[] = $type;
+                    }
+                }
+            }
+
+            // Scan #[Inject] constructor params
+            $constructor = $rc->getConstructor();
+            if ($constructor) {
+                foreach ($constructor->getParameters() as $param) {
+                    foreach ($param->getAttributes(\Lento\Routing\Attributes\Inject::class) as $attr) {
+                        $type = $param->getType()?->getName();
+                        if ($type && !in_array($type, $allClasses, true)) {
+                            $allClasses[] = $type;
+                            $queue[] = $type;
+                        }
+                    }
+                }
+            }
+        }
+
+        return $allClasses;
     }
 
     /**
@@ -262,7 +311,7 @@ class LentoApi
      *
      * @return void
      */
-    public function start(): void
+    public function run(): void
     {
         $req = Request::capture();
         $res = new Response();

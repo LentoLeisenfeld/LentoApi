@@ -3,7 +3,6 @@
 namespace Lento\OpenAPI;
 
 use RuntimeException;
-
 use Lento\Http\Attributes\Get;
 use Lento\Formatter\Attributes\FileFormatter;
 use Lento\Routing\Attributes\{Inject, Controller};
@@ -53,8 +52,8 @@ class OpenAPIController
      *
      * @return array
      */
-    #[FileFormatter(filename: 'documentation.json', mimetype: 'text/json', download: false)]
     #[Get('/documentation.json')]
+    #[FileFormatter(filename: 'documentation.json', mimetype: 'text/json', download: false)]
     public function spec(): array
     {
         if (!$this->router) {

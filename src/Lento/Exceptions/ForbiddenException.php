@@ -4,7 +4,6 @@ namespace Lento\Exceptions;
 
 use Exception;
 use Throwable;
-
 use Lento\Enums\Message;
 
 /**

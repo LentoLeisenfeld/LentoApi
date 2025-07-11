@@ -2,17 +2,20 @@
 
 namespace Lento\OpenAPI;
 
+use Lento\Enums\Message;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionNamedType;
-
+use RuntimeException;
 use Lento\OpenAPI;
-use Lento\OpenAPI\Attributes\{Ignore, Property};
+use Lento\OpenAPI\Attributes\Ignore;
+use Lento\OpenAPI\Attributes\Property;
 use Lento\Routing\Router;
 use Lento\Routing\Attributes\Param;
+use Lento\OpenAPI\Attributes\Throws; // <-- NEW
 
 /**
- * OpenAPI Generator (patched to include scalar/simple endpoints)
+ * OpenAPI Generator (exception safe + Throws integration)
  */
 class OpenAPIGenerator
 {
@@ -37,6 +40,11 @@ class OpenAPIGenerator
     public function __construct(Router $router)
     {
         $this->router = $router;
+
+        // Ensure securitySchemes is an object for OpenAPI
+        if (empty($this->components['securitySchemes'])) {
+            $this->components['securitySchemes'] = new \stdClass();
+        }
     }
 
     public function generate(): array
@@ -55,45 +63,49 @@ class OpenAPIGenerator
     }
 
     protected function buildPaths(): array
-{
-    $paths = [];
+    {
+        $paths = [];
 
-    foreach ($this->router->getRoutes() as $route) {
-        // PATCH: handle stdClass with handlerSpec as array
-        $handlerSpec = null;
-        if (is_object($route) && is_array($route->handlerSpec) && isset($route->handlerSpec['spec'])) {
-            $handlerSpec = $route->handlerSpec['spec'];
-        } elseif (is_array($route) && isset($route['handlerSpec']['spec'])) {
-            $handlerSpec = $route['handlerSpec']['spec'];
+        foreach ($this->router->getRoutes() as $route) {
+            $handlerSpec = null;
+            if (is_object($route) && is_array($route->handlerSpec) && isset($route->handlerSpec['spec'])) {
+                $handlerSpec = $route->handlerSpec['spec'];
+            } elseif (is_array($route) && isset($route['handlerSpec']['spec'])) {
+                $handlerSpec = $route['handlerSpec']['spec'];
+            }
+            if (!is_array($handlerSpec) || count($handlerSpec) !== 2) {
+                continue;
+            }
+            [$controllerClass, $methodName] = $handlerSpec;
+
+            $methodRef = is_object($route) ? ($route->method ?? null) : ($route['method'] ?? null);
+            $rawPath = is_object($route) ? ($route->rawPath ?? null) : ($route['rawPath'] ?? null);
+            if (!$methodRef || !$rawPath) {
+                continue;
+            }
+
+            if (!$controllerClass || !class_exists($controllerClass)) {
+                throw new RuntimeException("OpenAPIGenerator: Controller class '$controllerClass' does not exist for route '$rawPath'.");
+            }
+
+            $refClass = new ReflectionClass($controllerClass);
+            if (!$refClass->hasMethod($methodName)) {
+                throw new RuntimeException("OpenAPIGenerator: Method '$methodName' not found in class '$controllerClass'.");
+            }
+            $refMethod = $refClass->getMethod($methodName);
+
+            if ($this->isIgnored($refClass, $refMethod)) {
+                continue;
+            }
+
+            $httpMethod = strtolower($methodRef);
+            $operation = $this->buildOperation($refMethod);
+
+            $paths[$rawPath][$httpMethod] = $operation;
         }
-        if (!is_array($handlerSpec) || count($handlerSpec) !== 2) continue;
-        [$controllerClass, $methodName] = $handlerSpec;
 
-        $methodRef = is_object($route) ? ($route->method ?? null) : ($route['method'] ?? null);
-        $rawPath = is_object($route) ? ($route->rawPath ?? null) : ($route['rawPath'] ?? null);
-        if (!$methodRef || !$rawPath) continue;
-
-        if (!$controllerClass || !class_exists($controllerClass)) {
-            error_log("OpenAPIGenerator: Controller class '$controllerClass' does not exist (route '$rawPath'). Skipping.");
-            continue;
-        }
-
-        $refClass = new \ReflectionClass($controllerClass);
-        if (!$refClass->hasMethod($methodName)) continue;
-        $refMethod = $refClass->getMethod($methodName);
-
-        if ($this->isIgnored($refClass, $refMethod)) continue;
-
-        $httpMethod = strtolower($methodRef);
-        $operation = $this->buildOperation($refMethod);
-
-        $paths[$rawPath][$httpMethod] = $operation;
+        return $paths;
     }
-
-    return $paths;
-}
-
-
 
     protected function isIgnored(ReflectionClass $refClass, ReflectionMethod $refMethod): bool
     {
@@ -114,7 +126,31 @@ class OpenAPIGenerator
 
         $responses = $this->getResponseSchemas($method);
 
-        // Patch: always include empty arrays for 'parameters' and 'responses'
+        // --- NEW: add Throws attribute responses ---
+        $throwsAttrs = $method->getAttributes(Throws::class, \ReflectionAttribute::IS_INSTANCEOF);
+        foreach ($throwsAttrs as $attr) {
+            $throws = $attr->newInstance();
+            $statusCode = (string) $throws->status;
+            $desc = $throws->description ?? $throws->exception ?? "Error";
+            if (!isset($responses[$statusCode])) {
+                $responses[$statusCode] = [
+                    'description' => $desc,
+                    'content' => [
+                        'application/json' => [
+                            'schema' => [
+                                'type' => 'object',
+                                'properties' => [
+                                    'error' => ['type' => 'string'],
+                                    // Optionally add 'details'
+                                ],
+                                'required' => ['error'],
+                            ],
+                        ],
+                    ],
+                ];
+            }
+        }
+
         $operation = array_filter([
             'summary' => ucfirst($method->getName()),
             'operationId' => $method->getDeclaringClass()->getShortName() . '_' . $method->getName(),
@@ -157,8 +193,9 @@ class OpenAPIGenerator
 
             if (!$type->isBuiltin()) {
                 if (!class_exists($typeName)) {
-                    error_log("OpenAPIGenerator: Parameter type '$typeName' does not exist (method {$method->getName()}). Skipping.");
-                    continue;
+                    throw new RuntimeException(
+                        Message::GeneratorPropertyDoesNotExist->interpolate(name: $typeName, method: $method->getName())
+                    );
                 }
                 $short = (new ReflectionClass($typeName))->getShortName();
                 $schemas[$short] = $typeName;
@@ -207,7 +244,6 @@ class OpenAPIGenerator
                     $schema = ['type' => 'object'];
                 }
             } else {
-                // Patch: correct OpenAPI type for scalar return
                 $schema = ['type' => $this->mapType($typeName)];
             }
         } else {
@@ -225,9 +261,11 @@ class OpenAPIGenerator
     protected function generateModelSchema(string $fqcn): array
     {
         if (!$fqcn || !class_exists($fqcn)) {
-            error_log("OpenAPIGenerator: generateModelSchema - class '$fqcn' does not exist.");
-            return ['type' => 'object', 'properties' => []];
+            throw new RuntimeException(
+                Message::GeneratorClassDoesNotExist->interpolate(fqcn: $fqcn)
+            );
         }
+
         $rc = new ReflectionClass($fqcn);
         $schema = ['type' => 'object', 'properties' => [], 'required' => []];
 
@@ -243,16 +281,25 @@ class OpenAPIGenerator
             $typeName = $type->getName();
 
             if (!$typeName) {
-                error_log("OpenAPIGenerator: Property '$name' in class '{$rc->getName()}' has no type. Skipping.");
-                continue;
+                throw new RuntimeException(
+                    Message::GeneratorPropertyHasNoType->interpolate(
+                        name: $name,
+                        rc: $rc->getName()
+                    )
+                );
             }
 
             if ($type->isBuiltin()) {
                 $schema['properties'][$name] = ['type' => $this->mapType($typeName)];
             } else {
                 if (!class_exists($typeName)) {
-                    error_log("OpenAPIGenerator: Property type '$typeName' does not exist (property '$name' in class '{$rc->getName()}'). Skipping.");
-                    continue;
+                    throw new RuntimeException(
+                        Message::GeneratorPropertyDoesNotExist->interpolate(
+                            type: $typeName,
+                            name: $name,
+                            rc: $rc->getName()
+                        )
+                    );
                 }
                 $short = (new ReflectionClass($typeName))->getShortName();
                 $schema['properties'][$name] = ['$ref' => "#/components/schemas/$short"];

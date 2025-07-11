@@ -5,7 +5,6 @@ namespace Lento\Logging;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Psr\Log\LogLevel;
-
 use Lento\Logging\LoggerOptions;
 
 /**
