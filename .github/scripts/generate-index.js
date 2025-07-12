@@ -3,13 +3,11 @@ const path = require('path');
 const matter = require('gray-matter');
 const glob = require('glob');
 
-// ALLE .md-Dateien im Repo finden (Rekursiv)
-const files = glob.sync('**/*.md', { ignore: 'node_modules/**' });
+const files = glob.sync('docs/**/*.md');
 
 const docs = files.map(file => {
   const content = fs.readFileSync(file, 'utf8');
   const parsed = matter(content, { engines: {
-    // JSON Frontmatter support
     json: s => JSON.parse(s)
   }});
   const slug = file.replace(/\.md$/, '').replace(/\\/g, '/');
@@ -22,5 +20,5 @@ const docs = files.map(file => {
   };
 });
 
-fs.writeFileSync('search-index.json', JSON.stringify(docs, null, 2));
-console.log(`search-index.json mit ${docs.length} Einträgen erstellt.`);
+fs.writeFileSync('index.json', JSON.stringify(docs, null, 2));
+console.log(`index.json mit ${docs.length} Einträgen erstellt.`);
