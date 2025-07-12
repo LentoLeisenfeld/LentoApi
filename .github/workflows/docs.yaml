@@ -27,7 +27,7 @@ jobs:
     - name: Prepare publishing directory
       run: |
         mkdir gh-pages-out
-        cp -r docs/ gh-pages-out/
+        cp -r docs/* gh-pages-out/
         cp search-index.json gh-pages-out/
 
     - name: Publish to gh-pages branch
