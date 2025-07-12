@@ -19,6 +19,7 @@ const docs = files.map(file => {
   return {
     slug,
     title: parsed.data.title || slug,
+    formattedTitle: parsed.data.formattedTitle || slug,
     tags: parsed.data.tags || [],
     excerpt: parsed.content.substr(0, 150),
     //content: parsed.content
