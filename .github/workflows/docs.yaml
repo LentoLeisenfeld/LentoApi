@@ -30,6 +30,9 @@ jobs:
         cp -r docs/* gh-pages-out/
         cp index.json gh-pages-out/
 
+    - name: Add CNAME for custom domain
+      run: echo 'leisenfeld.com/LentoApi' > gh-pages-out/CNAME
+
     - name: Publish to gh-pages branch
       uses: peaceiris/actions-gh-pages@v4
       with:
