@@ -16,7 +16,7 @@ const docs = files.map(file => {
     title: parsed.data.title || slug,
     tags: parsed.data.tags || [],
     excerpt: parsed.content.substr(0, 150),
-    content: parsed.content
+    //content: parsed.content
   };
 });
 
