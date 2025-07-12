@@ -7,10 +7,15 @@ const files = glob.sync('docs/**/*.md');
 
 const docs = files.map(file => {
   const content = fs.readFileSync(file, 'utf8');
-  const parsed = matter(content, { engines: {
-    json: s => JSON.parse(s)
-  }});
-  const slug = file.replace(/\.md$/, '').replace(/\\/g, '/');
+  const parsed = matter(content, {
+    engines: {
+      json: s => JSON.parse(s)
+    }
+  });
+  const slug = file
+    .replace(/^docs\//, '')   // remove leading 'docs/'
+    .replace(/\.md$/, '')     // remove '.md'
+    .replace(/\\/g, '/');     // fix any Windows backslashes
   return {
     slug,
     title: parsed.data.title || slug,
