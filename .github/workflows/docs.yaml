@@ -21,14 +21,14 @@ jobs:
     - name: Install dependencies
       run: npm install gray-matter glob
 
-    - name: Generate search-index.json
+    - name: Generate index.json
       run: node .github/scripts/generate-index.js
 
     - name: Prepare publishing directory
       run: |
         mkdir gh-pages-out
         cp -r docs/* gh-pages-out/
-        cp search-index.json gh-pages-out/
+        cp index.json gh-pages-out/
 
     - name: Publish to gh-pages branch
       uses: peaceiris/actions-gh-pages@v4
