@@ -1,7 +1,7 @@
 ---
 {
   "title": "LentoApi",
-  "formattedTitle": "<span class='text-slate-300'>#</span><span class='text-green-400'>[</span>LentoApi<span class='text-green-400'>]</span>",
+  "formattedTitle": "#<span class='text-green-400'>[</span>LentoApi<span class='text-green-400'>]</span>",
   "tags": ["welcome", "beginner", "quick", "setup"],
   "date": "2025-07-12",
   "summary": ""
