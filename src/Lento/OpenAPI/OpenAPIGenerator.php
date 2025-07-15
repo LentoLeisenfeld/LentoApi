@@ -52,7 +52,7 @@ class OpenAPIGenerator
         $options = OpenAPI::getOptions();
 
         return array_filter([
-            'openapi' => '3.0.0',
+            'openapi' => '3.1.0',
             'info' => OpenAPI::getInfo(),
             'paths' => $this->buildPaths(),
             'components' => $this->components,

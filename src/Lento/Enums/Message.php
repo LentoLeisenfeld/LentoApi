@@ -47,7 +47,7 @@ enum Message: string
     case GeneratorPropertyDoesNotExist = 'OpenAPIGenerator: Property type "{property}" does not exist (property "{name}" in class "{rc}")';
     case GeneratorPropertyHasNoType = 'OpenAPIGenerator: Property "{name}" in class "{rc}" has no type.';
     case GeneratorClassDoesNotExist = 'OpenAPIGenerator: generateModelSchema - class "{fqcn}" does not exist.';
-    case GeneratorPropertyDoesNotExist = 'OpenAPIGenerator: Parameter type "{type}" does not exist in method {method}.';
+    case GeneratorPropertyDoesNotExist2 = 'OpenAPIGenerator: Parameter type "{type}" does not exist in method {method}.';
     #endregion
 }
 // phpcs:enable Generic.Files.LineLength
