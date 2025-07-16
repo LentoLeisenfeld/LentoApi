@@ -3,11 +3,13 @@
 namespace Lento;
 
 use ReflectionClass;
+use Lento\Routing\Attributes\Inject;
 use Lento\Routing\{Router, RouteCache};
 use Lento\Routing\Attributes\Controller;
 use Lento\Formatter\Attributes\{FileFormatter, JSONFormatter, SimpleXmlFormatter};
 use Lento\OpenAPI\OpenAPIController;
 use Lento\Http\{Request, Response};
+use Lento\Logging\Logger;
 
 /**
  * Core API class with high-performance routing, middleware, logging, and CORS.
@@ -177,11 +179,11 @@ class LentoApi
             }
             $discovered[$class] = true;
 
-            $rc = new \ReflectionClass($class);
+            $rc = new ReflectionClass($class);
 
             // Scan #[Inject] properties
             foreach ($rc->getProperties() as $prop) {
-                foreach ($prop->getAttributes(\Lento\Routing\Attributes\Inject::class) as $attr) {
+                foreach ($prop->getAttributes(Inject::class) as $attr) {
                     $type = $prop->getType()?->getName();
                     if ($type && !in_array($type, $allClasses, true)) {
                         $allClasses[] = $type;
@@ -194,7 +196,7 @@ class LentoApi
             $constructor = $rc->getConstructor();
             if ($constructor) {
                 foreach ($constructor->getParameters() as $param) {
-                    foreach ($param->getAttributes(\Lento\Routing\Attributes\Inject::class) as $attr) {
+                    foreach ($param->getAttributes(Inject::class) as $attr) {
                         $type = $param->getType()?->getName();
                         if ($type && !in_array($type, $allClasses, true)) {
                             $allClasses[] = $type;
@@ -276,7 +278,7 @@ class LentoApi
                 }
 
                 if ($routeAttr) {
-                    $methodPath = $routeAttr->getPath() ?: $method->getName();
+                    $methodPath = $routeAttr->getPath() ?: '';
                     $combined = rtrim($prefix, '/') . '/' . ltrim($methodPath, '/');
                     $path = '/' . trim($combined, '/');
                     $this->router->addRoute(

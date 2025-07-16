@@ -53,7 +53,7 @@ class OpenAPIController
      * @return array
      */
     #[Get('/documentation.json')]
-    #[FileFormatter(filename: 'documentation.json', mimetype: 'text/json', download: false)]
+    #[FileFormatter(filename: 'documentation.json', mimetype: 'application/json', download: false)]
     public function spec(): array
     {
         if (!$this->router) {

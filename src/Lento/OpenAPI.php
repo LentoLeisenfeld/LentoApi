@@ -83,4 +83,11 @@ final class OpenAPI
     {
         return self::$options->toArray()['externalDocs'];
     }
+
+    public static function addTag(string $name, string $description): void
+    {
+        self::$options->tags[] = [
+            "name" => $name,
+            "description" => $description];
+    }
 }

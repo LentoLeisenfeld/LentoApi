@@ -3,6 +3,8 @@
 namespace Lento\OpenAPI;
 
 use Lento\Enums\Message;
+use Lento\OpenAPI\Attributes\{Summary, Tags};
+use Lento\OpenAPI\Attributes\Deprecated;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionNamedType;
@@ -12,7 +14,8 @@ use Lento\OpenAPI\Attributes\Ignore;
 use Lento\OpenAPI\Attributes\Property;
 use Lento\Routing\Router;
 use Lento\Routing\Attributes\Param;
-use Lento\OpenAPI\Attributes\Throws; // <-- NEW
+use Lento\OpenAPI\Attributes\Throws;
+use Lento\Logging\Logger;
 
 /**
  * OpenAPI Generator (exception safe + Throws integration)
@@ -68,14 +71,22 @@ class OpenAPIGenerator
 
         foreach ($this->router->getRoutes() as $route) {
             $handlerSpec = null;
-            if (is_object($route) && is_array($route->handlerSpec) && isset($route->handlerSpec['spec'])) {
-                $handlerSpec = $route->handlerSpec['spec'];
+
+            if (is_object($route) && is_array($route->handlerSpec)) {
+                if (isset($route->handlerSpec[0], $route->handlerSpec[1])) {
+                    $handlerSpec = $route->handlerSpec;
+                } elseif (isset($route->handlerSpec['spec'])) {
+                    $handlerSpec = $route->handlerSpec['spec'];
+                }
             } elseif (is_array($route) && isset($route['handlerSpec']['spec'])) {
                 $handlerSpec = $route['handlerSpec']['spec'];
             }
+
             if (!is_array($handlerSpec) || count($handlerSpec) !== 2) {
+                Logger::debug(message: "OpenAPIGenerator: Skipping route due to invalid handlerSpec");
                 continue;
             }
+
             [$controllerClass, $methodName] = $handlerSpec;
 
             $methodRef = is_object($route) ? ($route->method ?? null) : ($route['method'] ?? null);
@@ -84,7 +95,7 @@ class OpenAPIGenerator
                 continue;
             }
 
-            if (!$controllerClass || !class_exists($controllerClass)) {
+            if (!class_exists($controllerClass)) {
                 throw new RuntimeException("OpenAPIGenerator: Controller class '$controllerClass' does not exist for route '$rawPath'.");
             }
 
@@ -92,6 +103,7 @@ class OpenAPIGenerator
             if (!$refClass->hasMethod($methodName)) {
                 throw new RuntimeException("OpenAPIGenerator: Method '$methodName' not found in class '$controllerClass'.");
             }
+
             $refMethod = $refClass->getMethod($methodName);
 
             if ($this->isIgnored($refClass, $refMethod)) {
@@ -106,6 +118,7 @@ class OpenAPIGenerator
 
         return $paths;
     }
+
 
     protected function isIgnored(ReflectionClass $refClass, ReflectionMethod $refMethod): bool
     {
@@ -151,10 +164,32 @@ class OpenAPIGenerator
             }
         }
 
+        $summaryAttribute = $method->getAttributes(Summary::class, \ReflectionAttribute::IS_INSTANCEOF)[0]?->newInstance();
+
+        $tagsClassAttributes = $method->getDeclaringClass()->getAttributes(Tags::class, \ReflectionAttribute::IS_INSTANCEOF);
+        $tagsMethodAttributes = $method->getAttributes(Tags::class, \ReflectionAttribute::IS_INSTANCEOF);
+
+        $tagsClassAttribute = $tagsClassAttributes[0] ?? null;
+        $tagsMethodAttribute = $tagsMethodAttributes[0] ?? null;
+
+        $tagsClass = $tagsClassAttribute?->newInstance();
+        $tagsMethod = $tagsMethodAttribute?->newInstance();
+        $tags = [];
+
+        if ($tagsClass instanceof Tags) {
+            $tags = array_merge($tags, $tagsClass->tags);
+        }
+
+        if ($tagsMethod instanceof Tags) {
+            $tags = array_merge($tags, $tagsMethod->tags);
+        }
+
+        $distinctTags = array_values(array_unique($tags));
+
         $operation = array_filter([
-            'summary' => ucfirst($method->getName()),
+            'summary' => $summaryAttribute?->text ?? $method->getDeclaringClass()->getName() . '->' . $method->getName(),
             'operationId' => $method->getDeclaringClass()->getShortName() . '_' . $method->getName(),
-            'tags' => [$method->getDeclaringClass()->getShortName()],
+            'tags' => $distinctTags,
             'parameters' => $parameters ?: [],
             'requestBody' => $requestBody,
             'responses' => $responses ?: [],

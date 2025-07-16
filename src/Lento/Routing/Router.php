@@ -19,6 +19,7 @@ use DomainException;
 use LogicException;
 use Throwable;
 use ReflectionAttribute;
+use RuntimeException;
 
 use Lento\Formatter\Attributes\{JSONFormatter, SimpleXmlFormatter, FileFormatter};
 use Lento\{Container};
@@ -388,33 +389,33 @@ class Router
 
             // Robust property injection
             $rc = new ReflectionClass($controller);
-foreach ($rc->getProperties() as $prop) {
-    if ($prop->getAttributes(\Lento\Routing\Attributes\Inject::class)) {
-        $type = $prop->getType()?->getName();
-        $prop->setAccessible(true);
+            foreach ($rc->getProperties() as $prop) {
+                if ($prop->getAttributes(Inject::class)) {
+                    $type = $prop->getType()?->getName();
+                    $prop->setAccessible(true);
 
-        if ($type === \Lento\Http\Request::class) {
-            $prop->setValue($controller, $req);
-        } elseif ($type === \Lento\Http\Response::class) {
-            $prop->setValue($controller, $res);
-        } elseif ($type === self::class) {
-            $prop->setValue($controller, $this);
-        } elseif ($this->container && $type && class_exists($type)) {
-            $service = $this->container->get($type);
-            if ($service === null) {
-                throw new \RuntimeException(
-                    "Dependency $type could not be injected into " . $rc->getName() . '::$' . $prop->getName()
-                );
+                    if ($type === Request::class) {
+                        $prop->setValue($controller, $req);
+                    } elseif ($type === Response::class) {
+                        $prop->setValue($controller, $res);
+                    } elseif ($type === self::class) {
+                        $prop->setValue($controller, $this);
+                    } elseif ($this->container && $type && class_exists($type)) {
+                        $service = $this->container->get($type);
+                        if ($service === null) {
+                            throw new RuntimeException(
+                                "Dependency $type could not be injected into " . $rc->getName() . '::$' . $prop->getName()
+                            );
+                        }
+                        $prop->setValue($controller, $service);
+                    } else {
+                        // Last resort: Don't set property, or throw.
+                        throw new RuntimeException(
+                            "Cannot inject unknown type $type into " . $rc->getName() . '::$' . $prop->getName()
+                        );
+                    }
+                }
             }
-            $prop->setValue($controller, $service);
-        } else {
-            // Last resort: Don't set property, or throw.
-            throw new \RuntimeException(
-                "Cannot inject unknown type $type into " . $rc->getName() . '::$' . $prop->getName()
-            );
-        }
-    }
-}
 
 
             // Method parameter injection (with validation)
