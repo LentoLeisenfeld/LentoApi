@@ -115,6 +115,22 @@ class OpenAPIGenerator
 
             $paths[$rawPath][$httpMethod] = $operation;
         }
+        ksort(array: $paths);
+
+        $httpOrder = ['get', 'post', 'put', 'patch', 'delete'];
+
+        foreach ($paths as &$methods) {
+            uksort($methods, function ($a, $b) use ($httpOrder) {
+                $posA = array_search($a, $httpOrder);
+                $posB = array_search($b, $httpOrder);
+
+                // Unknown methods go last
+                $posA = $posA === false ? PHP_INT_MAX : $posA;
+                $posB = $posB === false ? PHP_INT_MAX : $posB;
+
+                return $posA <=> $posB;
+            });
+        }
 
         return $paths;
     }
