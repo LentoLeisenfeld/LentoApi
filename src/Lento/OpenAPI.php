@@ -84,10 +84,29 @@ final class OpenAPI
         return self::$options->toArray()['externalDocs'];
     }
 
-    public static function addTag(string $name, string $description): void
+    public static function addTag(string $name, string $description): self
     {
         self::$options->tags[] = [
             "name" => $name,
-            "description" => $description];
+            "description" => $description
+        ];
+
+        return new self();
+    }
+
+    public static function addTags(array $tags): self
+    {
+        foreach ($tags as [$name, $desc]) {
+            self::addTag($name, $desc);
+        }
+
+        return new self();
+    }
+
+    public static function enable(): self
+    {
+        self::$enabled = true;
+
+        return new self();
     }
 }
