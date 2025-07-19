@@ -1,5 +1,5 @@
 {
-  "name": "lento/lentoapi",
+  "name": "lento/api",
   "description": "A lightweight modular API framework for PHP, bundling routing, middleware, CORS, logging, and Eloquent ORM.",
   "keywords": [
     "php",
