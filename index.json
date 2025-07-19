@@ -1,0 +1,54 @@
+[
+  {
+    "slug": "lentoapi",
+    "title": "LentoApi",
+    "formattedTitle": "lentoapi",
+    "tags": [
+      "class",
+      "core"
+    ],
+    "excerpt": "# LentoApi Class"
+  },
+  {
+    "slug": "index",
+    "title": "LentoApi",
+    "formattedTitle": "#<span class='text-green-400'>[</span>LentoApi<span class='text-green-400'>]</span>",
+    "tags": [
+      "welcome",
+      "beginner",
+      "quick",
+      "setup"
+    ],
+    "excerpt": "# Quick Setup Guide\n\nHello World!\n\n## Installation\n\nHello Lento!\n\n## Example\n\n```json\n{\n  \"debug\": true,\n  \"database\": {\n    \"host\": \"localhost\",\n    "
+  },
+  {
+    "slug": "exceptions/notfound",
+    "title": "Not Found Exception",
+    "formattedTitle": "exceptions/notfound",
+    "tags": [
+      "exceptions",
+      "throws"
+    ],
+    "excerpt": "# Not Found"
+  },
+  {
+    "slug": "exceptions/index",
+    "title": "Exceptions",
+    "formattedTitle": "exceptions/index",
+    "tags": [
+      "exceptions",
+      "throws"
+    ],
+    "excerpt": "# Exceptions"
+  },
+  {
+    "slug": "exceptions/forbidden",
+    "title": "Forbidden Exception",
+    "formattedTitle": "exceptions/forbidden",
+    "tags": [
+      "exceptions",
+      "throws"
+    ],
+    "excerpt": "# Forbidden"
+  }
+]
