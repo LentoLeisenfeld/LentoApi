@@ -3,12 +3,17 @@
 namespace Lento;
 
 use ReflectionClass;
-use Exception;
+use Throwable;
+
+use Psr\Container\NotFoundExceptionInterface;
+use Psr\Container\ContainerInterface;
+
+use Lento\Exceptions\{ContainerException, NotFoundException};
 
 /**
  * Undocumented class
  */
-class Container
+class Container implements ContainerInterface
 {
     /**
      * Undocumented variable
@@ -33,33 +38,41 @@ class Container
      * @template T
      * @param class-string<T> $className
      * @return T
-     * @throws Exception
+     * @throws ContainerException
+     * @throws NotFoundException
      */
-    public function get(string $className)
+    public function get(string $id)
     {
-        // Return existing
-        if (isset($this->services[$className])) {
-            return $this->services[$className];
+        if (isset($this->services[$id])) {
+            return $this->services[$id];
         }
-        // Auto-wire concrete classes
-        if (class_exists($className)) {
-            $reflect = new ReflectionClass($className);
-            // For simple classes without constructor or with optional params
-            if (!$reflect->getConstructor() || $reflect->getConstructor()->getNumberOfRequiredParameters() === 0) {
-                $instance = $reflect->newInstance();
-                $this->services[$className] = $instance;
-                return $instance;
+        if (class_exists($id)) {
+            $reflect = new ReflectionClass($id);
+            try {
+                if (!$reflect->getConstructor() || $reflect->getConstructor()->getNumberOfRequiredParameters() === 0) {
+                    $instance = $reflect->newInstance();
+                    $this->services[$id] = $instance;
+                    return $instance;
+                }
+            } catch (Throwable $e) {
+                throw new ContainerException($e->getMessage(), 0, $e);
             }
         }
-        throw new Exception("Service '$className' not registered");
+        throw new NotFoundException("Service '$id' not found");
     }
 
+    /**
+     * Undocumented function
+     *
+     * @param string $class
+     * @return boolean
+     */
     public function has(string $class): bool
     {
         try {
             $this->get($class);
             return true;
-        } catch (\Throwable $e) {
+        } catch (NotFoundExceptionInterface $e) {
             return false;
         }
     }

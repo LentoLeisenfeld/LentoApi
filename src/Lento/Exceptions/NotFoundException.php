@@ -4,12 +4,13 @@ namespace Lento\Exceptions;
 
 use Exception;
 use Throwable;
+use Psr\Container\NotFoundExceptionInterface;
 use Lento\Enums\Message;
 
 /**
  * Undocumented class
  */
-class NotFoundException extends Exception
+class NotFoundException extends Exception implements NotFoundExceptionInterface
 {
     /**
      * Undocumented variable
