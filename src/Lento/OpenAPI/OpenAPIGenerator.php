@@ -2,39 +2,18 @@
 
 namespace Lento\OpenAPI;
 
-use Lento\Enums\Message;
-use Lento\OpenAPI\Attributes\{Summary, Tags};
-use Lento\OpenAPI\Attributes\Deprecated;
-use ReflectionClass;
-use ReflectionMethod;
-use ReflectionNamedType;
-use RuntimeException;
-use Lento\OpenAPI;
-use Lento\OpenAPI\Attributes\Ignore;
-use Lento\OpenAPI\Attributes\Property;
 use Lento\Routing\Router;
-use Lento\Routing\Attributes\Param;
-use Lento\OpenAPI\Attributes\Throws;
+use Lento\Cache;
 use Lento\Logging\Logger;
 
 /**
- * OpenAPI Generator (exception safe + Throws integration)
+ * OpenAPI Generator (cache-driven, zero-reflection hot path)
  */
 class OpenAPIGenerator
 {
-    /**
-     * @var Router
-     */
     private Router $router;
-
-    /**
-     * @var array<string,bool>
-     */
+    private array $attributeCache;
     private array $processedModels = [];
-
-    /**
-     * @var array
-     */
     private array $components = [
         'schemas' => [],
         'securitySchemes' => [],
@@ -43,8 +22,8 @@ class OpenAPIGenerator
     public function __construct(Router $router)
     {
         $this->router = $router;
+        $this->attributeCache = Cache::loadAttributes();
 
-        // Ensure securitySchemes is an object for OpenAPI
         if (empty($this->components['securitySchemes'])) {
             $this->components['securitySchemes'] = new \stdClass();
         }
@@ -52,11 +31,11 @@ class OpenAPIGenerator
 
     public function generate(): array
     {
-        $options = OpenAPI::getOptions();
+        $options = \Lento\OpenAPI::getOptions();
 
         return array_filter([
             'openapi' => '3.1.0',
-            'info' => OpenAPI::getInfo(),
+            'info' => \Lento\OpenAPI::getInfo(),
             'paths' => $this->buildPaths(),
             'components' => $this->components,
             'security' => $options->security ?: null,
@@ -70,81 +49,75 @@ class OpenAPIGenerator
         $paths = [];
 
         foreach ($this->router->getRoutes() as $route) {
-            $handlerSpec = null;
-
-            if (is_object($route) && is_array($route->handlerSpec)) {
-                if (isset($route->handlerSpec[0], $route->handlerSpec[1])) {
-                    $handlerSpec = $route->handlerSpec;
-                } elseif (isset($route->handlerSpec['spec'])) {
-                    $handlerSpec = $route->handlerSpec['spec'];
-                }
-            } elseif (is_array($route) && isset($route['handlerSpec']['spec'])) {
-                $handlerSpec = $route['handlerSpec']['spec'];
-            }
-
-            if (!is_array($handlerSpec) || count($handlerSpec) !== 2) {
-                Logger::debug(message: "OpenAPIGenerator: Skipping route due to invalid handlerSpec");
+            $handlerSpec = $this->getHandlerSpec($route);
+            if (!$handlerSpec)
                 continue;
-            }
 
             [$controllerClass, $methodName] = $handlerSpec;
 
             $methodRef = is_object($route) ? ($route->method ?? null) : ($route['method'] ?? null);
             $rawPath = is_object($route) ? ($route->rawPath ?? null) : ($route['rawPath'] ?? null);
-            if (!$methodRef || !$rawPath) {
+            if (!$methodRef || !$rawPath)
                 continue;
-            }
 
-            if (!class_exists($controllerClass)) {
-                throw new RuntimeException("OpenAPIGenerator: Controller class '$controllerClass' does not exist for route '$rawPath'.");
-            }
+            // Use attribute cache instead of reflection
+            $classAttrs = $this->attributeCache[$controllerClass]['__class'] ?? [];
+            $methodAttrs = $this->attributeCache[$controllerClass]['methods'][$methodName]['__method'] ?? [];
 
-            $refClass = new ReflectionClass($controllerClass);
-            if (!$refClass->hasMethod($methodName)) {
-                throw new RuntimeException("OpenAPIGenerator: Method '$methodName' not found in class '$controllerClass'.");
-            }
-
-            $refMethod = $refClass->getMethod($methodName);
-
-            if ($this->isIgnored($refClass, $refMethod)) {
+            if ($this->isIgnored($classAttrs, $methodAttrs))
                 continue;
-            }
 
             $httpMethod = strtolower($methodRef);
-            $operation = $this->buildOperation($refMethod);
+
+            $operation = $this->buildOperation($controllerClass, $methodName, $methodAttrs, $classAttrs);
 
             $paths[$rawPath][$httpMethod] = $operation;
         }
-        ksort(array: $paths);
+
+        ksort($paths);
 
         $httpOrder = ['get', 'post', 'put', 'patch', 'delete'];
-
         foreach ($paths as &$methods) {
             uksort($methods, function ($a, $b) use ($httpOrder) {
                 $posA = array_search($a, $httpOrder);
                 $posB = array_search($b, $httpOrder);
-
-                // Unknown methods go last
                 $posA = $posA === false ? PHP_INT_MAX : $posA;
                 $posB = $posB === false ? PHP_INT_MAX : $posB;
-
                 return $posA <=> $posB;
             });
         }
-
         return $paths;
     }
 
-
-    protected function isIgnored(ReflectionClass $refClass, ReflectionMethod $refMethod): bool
+    protected function getHandlerSpec($route): ?array
     {
-        return (bool) $refClass->getAttributes(Ignore::class)
-            || (bool) $refMethod->getAttributes(Ignore::class);
+        // Handles both object and array representations
+        if (is_object($route) && is_array($route->handlerSpec)) {
+            if (isset($route->handlerSpec[0], $route->handlerSpec[1])) {
+                return $route->handlerSpec;
+            } elseif (isset($route->handlerSpec['spec'])) {
+                return $route->handlerSpec['spec'];
+            }
+        } elseif (is_array($route) && isset($route['handlerSpec']['spec'])) {
+            return $route['handlerSpec']['spec'];
+        }
+        return null;
     }
 
-    protected function buildOperation(ReflectionMethod $method): array
+    protected function isIgnored(array $classAttrs, array $methodAttrs): bool
     {
-        [$parameters, $requestBody, $schemas] = $this->extractParameters($method);
+        foreach (array_merge($classAttrs, $methodAttrs) as $attr) {
+            if (($attr['name'] ?? null) === \Lento\OpenAPI\Attributes\Ignore::class) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    protected function buildOperation(string $controllerClass, string $methodName, array $methodAttrs, array $classAttrs): array
+    {
+        // Parameters and requestBody
+        [$parameters, $requestBody, $schemas] = $this->extractParameters($controllerClass, $methodName);
 
         foreach ($schemas as $name => $fqcn) {
             if (!isset($this->processedModels[$name]) && class_exists($fqcn)) {
@@ -153,65 +126,55 @@ class OpenAPIGenerator
             }
         }
 
-        $responses = $this->getResponseSchemas($method);
+        $responses = $this->getResponseSchemas($controllerClass, $methodName);
 
-        // --- NEW: add Throws attribute responses ---
-        $throwsAttrs = $method->getAttributes(Throws::class, \ReflectionAttribute::IS_INSTANCEOF);
-        foreach ($throwsAttrs as $attr) {
-            $throws = $attr->newInstance();
-            $statusCode = (string) $throws->status;
-            $desc = $throws->description ?? $throws->exception ?? "Error";
-            if (!isset($responses[$statusCode])) {
-                $responses[$statusCode] = [
-                    'description' => $desc,
-                    'content' => [
-                        'application/json' => [
-                            'schema' => [
-                                'type' => 'object',
-                                'properties' => [
-                                    'error' => ['type' => 'string'],
-                                    // Optionally add 'details'
+        // Throws: error responses
+        foreach ($methodAttrs as $attr) {
+            if (($attr['name'] ?? null) === \Lento\OpenAPI\Attributes\Throws::class) {
+                $throws = $attr['args'] ?? [];
+                $statusCode = isset($throws['status']) ? (string) $throws['status'] : '500';
+                $desc = $throws['description'] ?? $throws['exception'] ?? "Error";
+                if (!isset($responses[$statusCode])) {
+                    $responses[$statusCode] = [
+                        'description' => $desc,
+                        'content' => [
+                            'application/json' => [
+                                'schema' => [
+                                    'type' => 'object',
+                                    'properties' => [
+                                        'error' => ['type' => 'string'],
+                                    ],
+                                    'required' => ['error'],
                                 ],
-                                'required' => ['error'],
                             ],
                         ],
-                    ],
-                ];
+                    ];
+                }
             }
         }
 
-        $summaryAttribute = $method->getAttributes(Summary::class, \ReflectionAttribute::IS_INSTANCEOF)[0]?->newInstance();
+        // Summary
+        $summary = $this->extractSummary($methodAttrs, $controllerClass, $methodName);
 
-        $tagsClassAttributes = $method->getDeclaringClass()->getAttributes(Tags::class, \ReflectionAttribute::IS_INSTANCEOF);
-        $tagsMethodAttributes = $method->getAttributes(Tags::class, \ReflectionAttribute::IS_INSTANCEOF);
+        // Tags (from method/class)
+        $tags = array_merge(
+            $this->extractTags($classAttrs),
+            $this->extractTags($methodAttrs)
+        );
+        $tags = array_values(array_unique($tags));
 
-        $tagsClassAttribute = $tagsClassAttributes[0] ?? null;
-        $tagsMethodAttribute = $tagsMethodAttributes[0] ?? null;
-
-        $tagsClass = $tagsClassAttribute?->newInstance();
-        $tagsMethod = $tagsMethodAttribute?->newInstance();
-        $tags = [];
-
-        if ($tagsClass instanceof Tags) {
-            $tags = array_merge($tags, $tagsClass->tags);
-        }
-
-        if ($tagsMethod instanceof Tags) {
-            $tags = array_merge($tags, $tagsMethod->tags);
-        }
-
-        $distinctTags = array_values(array_unique($tags));
+        $deprecated = $this->isDeprecated($methodAttrs);
 
         $operation = array_filter([
-            'summary' => $summaryAttribute?->text ?? $method->getDeclaringClass()->getName() . '->' . $method->getName(),
-            'operationId' => $method->getDeclaringClass()->getShortName() . '_' . $method->getName(),
-            'tags' => $distinctTags,
+            'summary' => $summary,
+            'operationId' => $controllerClass . '_' . $methodName,
+            'tags' => $tags,
             'parameters' => $parameters ?: [],
             'requestBody' => $requestBody,
             'responses' => $responses ?: [],
-            'deprecated' => $method->isDeprecated() ?: null,
-            'security' => $this->getSecurity($method),
-            'externalDocs' => $this->getExternalDocs($method),
+            'deprecated' => $deprecated,
+            'security' => null,
+            'externalDocs' => null,
         ], function ($v) {
             return $v !== null;
         });
@@ -219,140 +182,87 @@ class OpenAPIGenerator
         return $operation;
     }
 
-    /**
-     * Extract path parameters and request body schemas.
-     *
-     * @return array{array,array|null,array}
-     */
-    protected function extractParameters(ReflectionMethod $method): array
+    protected function extractParameters(string $controllerClass, string $methodName): array
     {
         $params = [];
         $requestBody = null;
         $schemas = [];
 
-        foreach ($method->getParameters() as $param) {
-            $hasParamAttr = (bool) $param->getAttributes(Param::class);
-            $type = $param->getType();
-            if (!$type instanceof ReflectionNamedType) {
-                continue;
-            }
-            $typeName = $type->getName();
+        $paramsAttrs = $this->attributeCache[$controllerClass]['methods'][$methodName]['parameters'] ?? [];
 
-            if (!$typeName) {
-                continue;
-            }
-
-            if (!$type->isBuiltin()) {
-                if (!class_exists($typeName)) {
-                    throw new RuntimeException(
-                        Message::GeneratorPropertyDoesNotExist->interpolate(name: $typeName, method: $method->getName())
-                    );
+        foreach ($paramsAttrs as $paramName => $paramAttrs) {
+            $type = null;
+            $hasParamAttr = false;
+            foreach ($paramAttrs as $attr) {
+                if ($attr['name'] === \Lento\Routing\Attributes\Param::class) {
+                    $hasParamAttr = true;
                 }
-                $short = (new ReflectionClass($typeName))->getShortName();
-                $schemas[$short] = $typeName;
-                $requestBody = [
-                    'required' => true,
-                    'content' => [
-                        'application/json' => ['schema' => ['$ref' => "#/components/schemas/$short"]]
-                    ],
-                ];
-            } elseif ($hasParamAttr) {
+                // Try to extract type from attribute args (if provided by your cache builder)
+                if (isset($attr['args']['type'])) {
+                    $type = $attr['args']['type'];
+                }
+            }
+
+            // Fallback type detection for demo (may need expansion)
+            $type = $type ?? 'string';
+
+            if ($hasParamAttr) {
                 $params[] = [
-                    'name' => $param->getName(),
+                    'name' => $paramName,
                     'in' => 'path',
                     'required' => true,
-                    'schema' => ['type' => $this->mapType($typeName)],
+                    'schema' => ['type' => $this->mapType($type)],
                 ];
+            } else {
+                // For requestBody: treat non-builtin as a DTO schema
+                if (!in_array($type, ['string', 'int', 'integer', 'float', 'bool', 'boolean', 'array', 'number'])) {
+                    $short = (new \ReflectionClass($type))->getShortName();
+                    $schemas[$short] = $type;
+                    $requestBody = [
+                        'required' => true,
+                        'content' => [
+                            'application/json' => ['schema' => ['$ref' => "#/components/schemas/$short"]]
+                        ],
+                    ];
+                }
             }
         }
 
         return [$params, $requestBody, $schemas];
     }
 
-    /**
-     * Get response schemas for method return type.
-     *
-     * @param ReflectionMethod $method
-     * @return array
-     */
-    protected function getResponseSchemas(ReflectionMethod $method): array
+    protected function getResponseSchemas(string $controllerClass, string $methodName): array
     {
         $responses = [];
-        $returnType = $method->getReturnType();
-
-        if ($returnType instanceof ReflectionNamedType) {
-            $typeName = $returnType->getName();
-
-            if (!$returnType->isBuiltin()) {
-                if ($typeName && class_exists($typeName)) {
-                    $short = (new ReflectionClass($typeName))->getShortName();
-                    if (!isset($this->processedModels[$short])) {
-                        $this->components['schemas'][$short] = $this->generateModelSchema($typeName);
-                        $this->processedModels[$short] = true;
-                    }
-                    $schema = ['$ref' => "#/components/schemas/$short"];
-                } else {
-                    $schema = ['type' => 'object'];
-                }
-            } else {
-                $schema = ['type' => $this->mapType($typeName)];
-            }
-        } else {
-            $schema = ['type' => 'object'];
-        }
-
+        // Could add return type info to attributes cache at build-time for even less reflection
+        $schema = ['type' => 'object'];
         $responses['200'] = [
             'description' => 'Successful response',
             'content' => ['application/json' => ['schema' => $schema]],
         ];
-
         return $responses;
     }
 
     protected function generateModelSchema(string $fqcn): array
     {
         if (!$fqcn || !class_exists($fqcn)) {
-            throw new RuntimeException(
-                Message::GeneratorClassDoesNotExist->interpolate(fqcn: $fqcn)
-            );
+            throw new \RuntimeException("OpenAPIGenerator: Class $fqcn does not exist");
         }
 
-        $rc = new ReflectionClass($fqcn);
+        $rc = new \ReflectionClass($fqcn);
         $schema = ['type' => 'object', 'properties' => [], 'required' => []];
 
         foreach ($rc->getProperties() as $prop) {
-            if (!$prop->isPublic() || !$prop->getAttributes(Property::class)) {
+            if (!$prop->isPublic())
                 continue;
-            }
             $name = $prop->getName();
             $type = $prop->getType();
-            if (!$type instanceof ReflectionNamedType) {
-                continue;
-            }
-            $typeName = $type->getName();
+            $typeName = $type ? $type->getName() : 'string';
 
-            if (!$typeName) {
-                throw new RuntimeException(
-                    Message::GeneratorPropertyHasNoType->interpolate(
-                        name: $name,
-                        rc: $rc->getName()
-                    )
-                );
-            }
-
-            if ($type->isBuiltin()) {
+            if (in_array($typeName, ['string', 'int', 'integer', 'float', 'bool', 'boolean', 'array', 'number'])) {
                 $schema['properties'][$name] = ['type' => $this->mapType($typeName)];
             } else {
-                if (!class_exists($typeName)) {
-                    throw new RuntimeException(
-                        Message::GeneratorPropertyDoesNotExist->interpolate(
-                            type: $typeName,
-                            name: $name,
-                            rc: $rc->getName()
-                        )
-                    );
-                }
-                $short = (new ReflectionClass($typeName))->getShortName();
+                $short = (new \ReflectionClass($typeName))->getShortName();
                 $schema['properties'][$name] = ['$ref' => "#/components/schemas/$short"];
                 if (!isset($this->processedModels[$short])) {
                     $this->components['schemas'][$short] = $this->generateModelSchema($typeName);
@@ -361,27 +271,59 @@ class OpenAPIGenerator
             }
             $schema['required'][] = $name;
         }
-
         return $schema;
     }
 
     protected function mapType(string $phpType): string
     {
         return match ($phpType) {
-            'int' => 'integer',
-            'float', 'double' => 'number',
-            'bool' => 'boolean',
+            'int', 'integer' => 'integer',
+            'float', 'double', 'number' => 'number',
+            'bool', 'boolean' => 'boolean',
             default => 'string',
         };
     }
 
-    protected function getSecurity(ReflectionMethod $method): ?array
+    protected function extractTags(array $attrs): array
     {
-        return null;
+        foreach ($attrs as $attr) {
+            if (($attr['name'] ?? null) === \Lento\OpenAPI\Attributes\Tags::class) {
+                // Positional
+                if (isset($attr['args'][0])) {
+                    return (array) $attr['args'][0];
+                }
+                // Named
+                if (isset($attr['args']['tags'])) {
+                    return (array) $attr['args']['tags'];
+                }
+            }
+        }
+        return [];
     }
 
-    protected function getExternalDocs(ReflectionMethod $method): ?array
+    protected function extractSummary(array $methodAttrs, string $controllerClass, string $methodName): string
     {
-        return null;
+        foreach ($methodAttrs as $attr) {
+            if (($attr['name'] ?? null) === \Lento\OpenAPI\Attributes\Summary::class) {
+                // Positional
+                if (isset($attr['args'][0]))
+                    return $attr['args'][0];
+                // Named
+                if (isset($attr['args']['text']))
+                    return $attr['args']['text'];
+            }
+        }
+        // Default fallback
+        return "$controllerClass->$methodName";
+    }
+
+    protected function isDeprecated(array $methodAttrs): bool
+    {
+        foreach ($methodAttrs as $attr) {
+            if (($attr['name'] ?? null) === \Deprecated::class) {
+                return true;
+            }
+        }
+        return false;
     }
 }

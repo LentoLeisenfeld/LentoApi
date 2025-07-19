@@ -13,7 +13,8 @@ class Tags
     /**
      * Undocumented function
      *
-     * @param array $text
+     * @param array $tags
+     * @param string|null $name
      */
     public function __construct(
         /**
@@ -21,7 +22,9 @@ class Tags
          *
          * @var array
          */
-        public array $tags = []
+        public array $tags = [],
+
+        public ?string $name = null
     ) {
     }
 }

@@ -24,7 +24,7 @@ class OpenAPIController
      * @var Router
      */
     #[Inject]
-    private Router $router;
+    protected Router $router;
 
     /**
      * Undocumented function

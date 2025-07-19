@@ -1,237 +1,187 @@
 <?php
 
-/**
- * Lento API Router
- *
- * High-performance HTTP router with attribute-based controller discovery,
- * dependency injection, dynamic/static route handling, precompiled closures,
- * formatter attributes (JSON/XML/File/Static), and automated error responses.
- *
- * @package Lento\Routing
- * @author  Lento Leisenfeld
- * @license MIT
- */
-
 namespace Lento\Routing;
 
+use Lento\Container;
+use Lento\Http\{Request, Response, View};
+use Lento\Validation\Validator;
+use Lento\Exceptions\ValidationException;
 use ReflectionClass;
-use DomainException;
-use LogicException;
-use Throwable;
-use ReflectionAttribute;
-use RuntimeException;
+use Lento\Cache;
+use Lento\Routing\Attributes\{Inject, Body, Param, Query, Controller as ControllerAttr};
+use Lento\Formatter\Attributes\{FileFormatter, JSONFormatter, SimpleXmlFormatter};
 
-use Lento\Formatter\Attributes\{JSONFormatter, SimpleXmlFormatter, FileFormatter};
-use Lento\{Container};
-use Lento\Http\{Request, Response};
-use Lento\Routing\Attributes\{Service, Body, Param, Query, Inject};
-use Lento\Auth\JWT;
-use Lento\Exceptions\{NotFoundException, UnauthorizedException, ForbiddenException, ValidationException};
-use Lento\Logging\Logger;
-use Lento\OpenAPI\Attributes\Throws;
-
-/**
- * Class Router
- *
- * @package Lento\Routing
- * @psalm-type HandlerSpec=array{0:string,1:string}
- */
-#[Service]
 class Router
 {
-    /** @var array<string, array<string, array>> */
-    private array $staticRoutes = [];
-    /** @var array<string, array<array>> */
-    private array $dynamicRoutes = [];
-    /** @var array<string, array<string, HandlerSpec>> */
-    private array $staticSpecs = [];
-    /** @var array<string, array<array{path: string, spec: HandlerSpec}>> */
-    private array $dynamicSpecs = [];
-
+    public array $staticRoutes = [];
+    public array $dynamicRoutes = [];
     private ?Container $container = null;
 
-    /**
-     * Set the DI container for controller/service injection.
-     */
     public function setContainer(Container $container): void
     {
         $this->container = $container;
     }
 
-    /**
-     * Add a new route and compile its handler closure.
-     *
-     * @param string      $method       HTTP method (GET/POST/...)
-     * @param string      $path         Route path (can contain {placeholders})
-     * @param HandlerSpec $handlerSpec  [ControllerClass, methodName]
-     * @param mixed|null  $formatterAttr Optional formatter info/attribute
-     */
-    public function addRoute(string $method, string $path, array $handlerSpec, $formatterAttr = null): void
+    public function addCompiledRoute(array $plan, bool $dynamic): void
     {
-        $normalized = '/' . ltrim(rtrim($path, '/'), '/');
-        $m = strtoupper($method);
-
-        // Use formatter attribute if given, else default to JSON
-        $formatter = $formatterAttr ?: ['type' => 'json', 'options' => null];
-
-        // === NEW: Discover #[Throws] attributes on the controller method ===
-        $throwsAttrs = [];
-        try {
-            $rc = new ReflectionClass($handlerSpec[0]);
-            $rm = $rc->getMethod($handlerSpec[1]);
-            $throwsAttrs = array_map(
-                fn($attr) => $attr->newInstance(),
-                $rm->getAttributes(Throws::class, ReflectionAttribute::IS_INSTANCEOF)
-            );
-        } catch (Throwable $e) {
-            // Optionally: log or ignore missing class/method
-        }
-
-        // PATCH: Save formatter AND throws in staticSpecs and dynamicSpecs for cache
-        $specEntry = [
-            'spec' => $handlerSpec,
-            'formatter' => self::exportFormatter($formatter),
-            'throws' => self::exportThrows($throwsAttrs), // new
-        ];
-
-        $routeData = [
-            'handler' => $this->makeHandler($handlerSpec),
-            'formatter' => $formatter,
-            'spec' => $handlerSpec,
-            'throws' => $throwsAttrs, // new
-        ];
-
-        if (strpos($normalized, '{') === false) {
-            $this->staticRoutes[$m][$normalized] = $routeData;
-            $this->staticSpecs[$m][$normalized] = $specEntry;
+        if ($dynamic) {
+            $this->dynamicRoutes[$plan['httpMethod']][] = $plan;
         } else {
-            $pattern = preg_replace('#\{(\w+)\}#', '(?P<\1>[^/]+)', $normalized);
-            $regex = '#^' . $pattern . '$#';
-            $this->dynamicRoutes[$m][] = [$regex, $routeData];
-            $this->dynamicSpecs[$m][] = [
-                'path' => $normalized,
-                'spec' => $handlerSpec,
-                'formatter' => self::exportFormatter($formatter),
-                'throws' => self::exportThrows($throwsAttrs), // new
-            ];
+            $this->staticRoutes[$plan['httpMethod']][$plan['path']] = $plan;
         }
     }
 
-    // Helper to export throws array for cache (add to Router)
-    private static function exportThrows(array $throwsAttrs): array
+    public function exportCompiledPlans(): array
     {
-        return array_map(function ($attr) {
-            return [
-                'exception' => $attr->exception,
-                'status' => $attr->status,
-                'description' => $attr->description,
-            ];
-        }, $throwsAttrs);
+        return [
+            'staticRoutes' => $this->staticRoutes,
+            'dynamicRoutes' => $this->dynamicRoutes,
+        ];
     }
 
+    public function importCompiledPlans(array $data): void
+    {
+        $this->staticRoutes = $data['staticRoutes'] ?? [];
+        $this->dynamicRoutes = $data['dynamicRoutes'] ?? [];
+    }
 
     /**
-     * Helper: resolve formatter attribute, return ['type'=>..., 'options'=>...]
+     * One-call, no-brainer router boot: handles cold boot and cache logic.
      */
-    private static function resolveFormatterAttr(array $attrs): ?array
+    public static function boot(array $controllers, array $serviceClasses = [], ?Container $container = null): self
     {
-        foreach ($attrs as $attr) {
-            $n = $attr->getName();
-            switch ($n) {
-                case SimpleXmlFormatter::class:
-                    return ['type' => 'xml', 'options' => null];
-                case FileFormatter::class:
-                    return ['type' => 'file', 'options' => $attr->newInstance()];
-                case JSONFormatter::class:
-                    return ['type' => 'json', 'options' => null];
+        $router = new self();
+        if ($container) {
+            $router->setContainer($container);
+        }
+
+        if (!Cache::isAvailable($controllers)) {
+            // ---- COLD BOOT ----
+            $plans = self::compileRoutePlans($controllers);
+
+            foreach ($plans['staticRoutes'] as $method => $routes) {
+                foreach ($routes as $path => $plan) {
+                    $router->addCompiledRoute($plan, false);
+                }
             }
+            foreach ($plans['dynamicRoutes'] as $method => $routes) {
+                foreach ($routes as $plan) {
+                    $router->addCompiledRoute($plan, true);
+                }
+            }
+            Cache::storeFromRouter($router, $controllers, $serviceClasses);
+        } else {
+            // ---- WARM BOOT ----
+            Cache::loadToRouter($router);
         }
-        return null;
+        return $router;
     }
 
-    /**
-     * Dispatch the incoming request to the matched route.
-     *
-     * @return mixed|null
-     */
     public function dispatch(string $uri, string $httpMethod, Request $req, Response $res)
     {
-        $jwtPayload = JWT::fromRequestHeaders($req->headers);
-        $req->jwt = $jwtPayload;
-
         $path = '/' . ltrim(rtrim($uri, '/'), '/');
         $m = strtoupper($httpMethod);
-
-        $routeData = $this->staticRoutes[$m][$path] ?? null;
+        $route = $this->staticRoutes[$m][$path] ?? null;
         $params = [];
 
-        if (!$routeData) {
-            foreach ($this->dynamicRoutes[$m] ?? [] as [$regex, $routeCandidate]) {
-                if (preg_match($regex, $path, $matches)) {
-                    $params = array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
-                    $routeData = $routeCandidate;
+        if (!$route) {
+            foreach ($this->dynamicRoutes[$m] ?? [] as $entry) {
+                if (preg_match($entry['regex'], $path, $matches)) {
+                    foreach ($matches as $k => $v)
+                        if (is_string($k))
+                            $params[$k] = $v;
+                    $route = $entry;
                     break;
                 }
             }
         }
 
-        if (!$routeData) {
-            return $res->status(404)->withHeader('Content-Type', 'application/json')
-                ->write(json_encode(['error' => 'Not found']))->send();
+        if (!$route) {
+            return $res->status(404)
+                ->withHeader('Content-Type', 'application/json')
+                ->write(json_encode(['error' => 'Not found']))
+                ->send();
         }
 
-        $handler = $routeData['handler'];
-        $formatter = $routeData['formatter'];
+        $class = $route['controller'];
+        $controller = $this->container ? $this->container->get($class) : new $class();
 
-        try {
-            $result = $handler($params, $req, $res);
-        } catch (NotFoundException $e) {
-            return $res->status($e->getCode() ?: 404)
-                ->withHeader('Content-Type', 'application/json')
-                ->write(json_encode(['error' => $e->getMessage()]))
-                ->send();
-        } catch (UnauthorizedException $e) {
-            return $res->status($e->getCode() ?: 401)
-                ->withHeader('Content-Type', 'application/json')
-                ->write(json_encode(['error' => $e->getMessage()]))
-                ->send();
-        } catch (ForbiddenException $e) {
-            return $res->status($e->getCode() ?: 403)
-                ->withHeader('Content-Type', 'application/json')
-                ->write(json_encode(['error' => $e->getMessage()]))
-                ->send();
-        } catch (ValidationException $e) {
-            $body = ['error' => $e->getMessage()];
-            if (method_exists($e, 'getErrors')) {
-                $body['details'] = $e->getErrors();
+        // Use ReflectionProperty for DI (supports private/protected)
+        foreach ($route['propInject'] as $p) {
+            $propName = $p['name'];
+            $type = $p['type'];
+            $refProp = new \ReflectionProperty($class, $propName);
+            $refProp->setAccessible(true);
+
+            if ($type === Request::class) {
+                $refProp->setValue($controller, $req);
+            } elseif ($type === Response::class) {
+                $refProp->setValue($controller, $res);
+            } elseif ($type === self::class) {
+                $refProp->setValue($controller, $this);
+            } elseif ($this->container && class_exists($type)) {
+                $refProp->setValue($controller, $this->container->get($type));
             }
-            return $res->status($e->getCode() ?: 422)
-                ->withHeader('Content-Type', 'application/json')
-                ->write(json_encode($body))
-                ->send();
-        } catch (DomainException | LogicException $e) {
-            return $res->status($e->getCode() ?: 400)
-                ->withHeader('Content-Type', 'application/json')
-                ->write(json_encode(['error' => $e->getMessage()]))
-                ->send();
-        } catch (Throwable $e) {
-            Logger::error($e);
-            return $res->status(500)
-                ->withHeader('Content-Type', 'application/json')
-                ->write(json_encode(['error' => 'Internal Server Error']))
-                ->send();
+        }
+
+        $args = [];
+        foreach ($route['argPlan'] as $arg) {
+            switch ($arg['inject']) {
+                case 'Request':
+                    $args[] = $req;
+                    break;
+                case 'Response':
+                    $args[] = $res;
+                    break;
+                case 'Route':
+                    $args[] = $params[$arg['name']] ?? null;
+                    break;
+                case 'Query':
+                    $args[] = $req->query($arg['name']);
+                    break;
+                case 'Body':
+                    $dto = new $arg['class']($req->body());
+                    if ($arg['validate'] ?? false) {
+                        $validator = new Validator();
+                        $errors = $validator->validate($dto);
+                        if ($errors)
+                            throw new ValidationException("Validation failed", $errors);
+                    }
+                    $args[] = $dto;
+                    break;
+                case 'Scalar':
+                    $val = $params[$arg['name']] ?? $req->query($arg['name']) ?? null;
+                    settype($val, $arg['type']);
+                    $args[] = $val;
+                    break;
+                default:
+                    $args[] = null;
+                    break;
+            }
+        }
+
+        $method = $route['method'];
+        $result = $controller->$method(...$args);
+
+        // -------- HTML VIEW RENDERING ---------
+        if ($result instanceof View) {
+            $res->withHeader('Content-Type', 'text/html');
+            $res->write($result->render())->send();
+            return;
         }
 
         // -------- FORMATTER HANDLING ---------
-        // Attribute-based (class instance) formatters
-        if (is_object($formatter)) {
-            switch (get_class($formatter)) {
+        $formatter = $route['formatter'] ?? ['type' => 'json', 'options' => null];
+        if (is_array($formatter) && isset($formatter['type'])) {
+            switch ($formatter['type']) {
                 case FileFormatter::class:
-                    $mimetype = $formatter->mimetype ?? 'application/octet-stream';
+                case 'file':
+                    $options = $formatter['options'] ?? [];
+                    $mimetype = $options['mimetype'] ?? 'application/octet-stream';
                     $res->withHeader('Content-Type', $mimetype);
 
-                    if ($formatter->download) {
-                        $filename = $formatter->filename ?? (is_string($result) ? basename($result) : 'download.bin');
+                    if (!empty($options['download'])) {
+                        $filename = $options['filename'] ?? (is_string($result) ? basename($result) : 'download.bin');
                         $res->withHeader('Content-Disposition', "attachment; filename=\"$filename\"");
                     }
 
@@ -243,6 +193,7 @@ class Router
                     return;
 
                 case SimpleXmlFormatter::class:
+                case 'xml':
                     $res->withHeader('Content-Type', 'application/xml');
                     $xml = simplexml_load_string('<root/>');
                     $arrayResult = is_array($result) ? $result : (array) $result;
@@ -253,6 +204,7 @@ class Router
                     return;
 
                 case JSONFormatter::class:
+                case 'json':
                     // fall through below
                     break;
             }
@@ -265,258 +217,152 @@ class Router
     }
 
     /**
-     * Export route specs for cache.
-     *
-     * @return array
+     * Compile all route plans for the given controllers (run this at cold boot or cache build).
      */
-    public function exportCacheData(): array
+    public static function compileRoutePlans(array $controllers): array
     {
-        return [
-            'staticSpecs' => $this->staticSpecs,
-            'dynamicSpecs' => $this->dynamicSpecs,
-        ];
-    }
+        $staticRoutes = [];
+        $dynamicRoutes = [];
 
-    /**
-     * Import (precompiled) route specs from cache.
-     */
-    public function importCacheData(array $data): void
-    {
-        // Static routes
-        foreach ($data['staticSpecs'] ?? [] as $method => $routes) {
-            foreach ($routes as $path => $entry) {
-                $spec = $entry['spec'];
-                $formatterAttr = $entry['formatter'] ?? ['type' => 'json', 'options' => null];
-                $routeData = [
-                    'handler' => $this->makeHandler($spec),
-                    'formatter' => self::importFormatter($formatterAttr),
-                    'spec' => $spec,
-                ];
-
-                $this->staticSpecs[$method][$path] = $entry;
-                $this->staticRoutes[$method][$path] = $routeData;
-            }
-        }
-
-        // Dynamic routes
-        foreach ($data['dynamicSpecs'] ?? [] as $method => $entries) {
-            foreach ($entries as $entry) {
-                $spec = $entry['spec'];
-                $formatterAttr = $entry['formatter'] ?? ['type' => 'json', 'options' => null];
-                $pattern = preg_replace('#\{(\w+)\}#', '(?P<\1>[^/]+)', $entry['path']);
-                $regex = '#^' . $pattern . '$#';
-
-                $routeData = [
-                    'handler' => $this->makeHandler($spec),
-                    'formatter' => self::importFormatter($formatterAttr),
-                    'spec' => $spec,
-                ];
-
-                $this->dynamicSpecs[$method][] = $entry;
-                $this->dynamicRoutes[$method][] = [$regex, $routeData];
-            }
-        }
-    }
-
-    /**
-     * Undocumented function
-     *
-     * @param [type] $data
-     * @return array|FileFormatter
-     */
-    private static function importFormatter($data): array|FileFormatter
-    {
-        if (is_array($data) && isset($data['type'])) {
-            switch ($data['type']) {
-                case FileFormatter::class:
-                    return new FileFormatter(
-                        $data['options']['mimetype'] ?? null,
-                        $data['options']['filename'] ?? null,
-                        $data['options']['download'] ?? false
-                    );
-                case SimpleXmlFormatter::class:
-                case 'xml':
-                    return ['type' => 'xml', 'options' => null];
-                case JSONFormatter::class:
-                case 'json':
-                    return ['type' => 'json', 'options' => null];
-            }
-        }
-        return ['type' => 'json', 'options' => null];
-    }
-
-    /**
-     * Undocumented function
-     *
-     * @param [type] $formatter
-     * @return array
-     */
-    private static function exportFormatter($formatter): array
-    {
-        if (is_array($formatter)) {
-            // Old format (type/options), e.g. ['type' => 'json', ...]
-            if (isset($formatter['options']) && is_object($formatter['options'])) {
-                return [
-                    'type' => $formatter['type'],
-                    'options' => get_object_vars($formatter['options']),
-                ];
-            }
-            return $formatter;
-        }
-        if (is_object($formatter)) {
-            return [
-                'type' => get_class($formatter),
-                'options' => get_object_vars($formatter),
-            ];
-        }
-        return ['type' => 'json', 'options' => null];
-    }
-
-    /**
-     * Precompiled handler generator using the DI container.
-     *
-     * @param HandlerSpec $handlerSpec
-     * @return callable
-     */
-    private function makeHandler(array $handlerSpec): callable
-    {
-        [$class, $methodName] = $handlerSpec;
-        return function (array $params, $req, $res) use ($class, $methodName) {
-            // Instantiate controller (with DI)
-            $controller = $this->container
-                ? $this->container->get($class)
-                : new $class();
-
-            // Robust property injection
+        foreach ($controllers as $controller) {
             $rc = new ReflectionClass($controller);
-            foreach ($rc->getProperties() as $prop) {
-                if ($prop->getAttributes(Inject::class)) {
-                    $type = $prop->getType()?->getName();
-                    $prop->setAccessible(true);
+
+            $prefix = '';
+            foreach ($rc->getAttributes(ControllerAttr::class) as $attr) {
+                $cp = $attr->newInstance()->getPath();
+                $prefix = $cp !== '' ? '/' . trim($cp, '/') : '';
+                break;
+            }
+
+            foreach ($rc->getMethods() as $method) {
+                $routeAttr = null;
+                $formatterAttr = null;
+                foreach ($method->getAttributes() as $attr) {
+                    $instance = $attr->newInstance();
+                    if (method_exists($instance, 'getPath') && method_exists($instance, 'getHttpMethod')) {
+                        $routeAttr = $instance;
+                    }
+                    if (
+                        $instance instanceof FileFormatter ||
+                        $instance instanceof SimpleXmlFormatter ||
+                        $instance instanceof JSONFormatter
+                    ) {
+                        $formatterAttr = $instance;
+                    }
+                }
+                if (!$routeAttr)
+                    continue;
+
+                $methodPath = $routeAttr->getPath() ?: '';
+                $combined = rtrim($prefix, '/') . '/' . ltrim($methodPath, '/');
+                $path = '/' . trim($combined, '/');
+                $dynamic = strpos($path, '{') !== false;
+                $regex = null;
+
+                $propInject = [];
+                foreach ($rc->getProperties() as $prop) {
+                    if ($prop->getAttributes(Inject::class)) {
+                        $type = $prop->getType()?->getName();
+                        $propInject[] = [
+                            'name' => $prop->getName(),
+                            'type' => $type,
+                        ];
+                    }
+                }
+
+                $argPlan = [];
+                foreach ($method->getParameters() as $param) {
+                    $type = $param->getType()?->getName();
+                    $bodyAttr = $param->getAttributes(Body::class)[0] ?? null;
+                    $queryAttr = $param->getAttributes(Query::class)[0] ?? null;
+                    $routeAttrP = $param->getAttributes(Param::class)[0] ?? null;
 
                     if ($type === Request::class) {
-                        $prop->setValue($controller, $req);
+                        $argPlan[] = ['inject' => 'Request'];
                     } elseif ($type === Response::class) {
-                        $prop->setValue($controller, $res);
-                    } elseif ($type === self::class) {
-                        $prop->setValue($controller, $this);
-                    } elseif ($this->container && $type && class_exists($type)) {
-                        $service = $this->container->get($type);
-                        if ($service === null) {
-                            throw new RuntimeException(
-                                "Dependency $type could not be injected into " . $rc->getName() . '::$' . $prop->getName()
-                            );
-                        }
-                        $prop->setValue($controller, $service);
+                        $argPlan[] = ['inject' => 'Response'];
+                    } elseif ($bodyAttr && $type && class_exists($type)) {
+                        $argPlan[] = ['inject' => 'Body', 'class' => $type, 'validate' => true];
+                    } elseif ($queryAttr) {
+                        $attrInstance = $queryAttr->newInstance();
+                        $key = $attrInstance->name ?? $param->getName();
+                        $argPlan[] = ['inject' => 'Query', 'name' => $key];
+                    } elseif ($routeAttrP) {
+                        $attrInstance = $routeAttrP->newInstance();
+                        $key = $attrInstance->name ?? $param->getName();
+                        $argPlan[] = ['inject' => 'Route', 'name' => $key];
+                    } elseif ($type && in_array($type, ['string', 'int', 'float', 'bool'])) {
+                        $key = $param->getName();
+                        $argPlan[] = ['inject' => 'Scalar', 'name' => $key, 'type' => $type];
                     } else {
-                        // Last resort: Don't set property, or throw.
-                        throw new RuntimeException(
-                            "Cannot inject unknown type $type into " . $rc->getName() . '::$' . $prop->getName()
-                        );
+                        $argPlan[] = ['inject' => 'Unknown'];
                     }
                 }
+
+                if ($dynamic) {
+                    $pattern = preg_replace('#\{(\w+)\}#', '(?P<\1>[^/]+)', $path);
+                    $regex = '#^' . $pattern . '$#';
+                }
+
+                $formatter = $formatterAttr ? [
+                    'type' => get_class($formatterAttr),
+                    'options' => get_object_vars($formatterAttr),
+                ] : ['type' => 'json', 'options' => null];
+
+                $plan = [
+                    'httpMethod' => strtoupper($routeAttr->getHttpMethod()),
+                    'path' => $path,
+                    'regex' => $regex,
+                    'controller' => $controller,
+                    'method' => $method->getName(),
+                    'argPlan' => $argPlan,
+                    'propInject' => $propInject,
+                    'formatter' => $formatter,
+                    'throws' => [],
+                ];
+
+                if ($dynamic) {
+                    $dynamicRoutes[$plan['httpMethod']][] = $plan;
+                } else {
+                    $staticRoutes[$plan['httpMethod']][$path] = $plan;
+                }
             }
-
-
-            // Method parameter injection (with validation)
-            $rm = $rc->getMethod($methodName);
-            $args = [];
-            foreach ($rm->getParameters() as $param) {
-                $paramType = $param->getType()?->getName();
-
-                // Inject Request/Response as-is
-                if ($paramType === Request::class) {
-                    $args[] = $req;
-                    continue;
-                }
-                if ($paramType === Response::class) {
-                    $args[] = $res;
-                    continue;
-                }
-
-                // Attribute-driven resolution (Body/Query/Param)
-                $bodyAttr = $param->getAttributes(Body::class)[0] ?? null;
-                $queryAttr = $param->getAttributes(Query::class)[0] ?? null;
-                $routeAttr = $param->getAttributes(Param::class)[0]
-                    ?? $param->getAttributes(Route::class)[0] ?? null;
-
-                // 1. Body (JSON DTO)
-                if ($bodyAttr && $paramType && class_exists($paramType)) {
-                    $bodyData = $req->body();
-                    $dtoInstance = new $paramType($bodyData);
-
-                    // --- Validation here ---
-                    $validator = new \Lento\Validation\Validator();
-                    $errors = $validator->validate($dtoInstance);
-                    if ($errors) {
-                        throw new ValidationException("Validation failed", $errors);
-                    }
-                    $args[] = $dtoInstance;
-                    continue;
-                }
-
-                // 2. Query parameter (auto from request)
-                if ($queryAttr) {
-                    $attrInstance = $queryAttr->newInstance();
-                    $key = $attrInstance->name ?? $param->getName();
-                    $args[] = $req->query($key);
-                    continue;
-                }
-
-                // 3. Route parameter (from path)
-                if ($routeAttr) {
-                    $attrInstance = $routeAttr->newInstance();
-                    $key = $attrInstance->name ?? $param->getName();
-                    $args[] = $params[$key] ?? null;
-                    continue;
-                }
-
-                // 4. If no attribute but is a scalar type, try to inject from params or query
-                if ($paramType && in_array($paramType, ['string', 'int', 'float', 'bool'])) {
-                    $key = $param->getName();
-                    $val = $params[$key] ?? $req->query($key) ?? null;
-                    settype($val, $paramType);
-                    $args[] = $val;
-                    continue;
-                }
-
-                // 5. Fallback: null
-                $args[] = null;
-            }
-
-            // Invoke controller method
-            return $rm->invokeArgs($controller, $args);
-        };
-    }
-
-
-
-    /**
-     * Check if any routes are defined.
-     */
-    public function hasRoutes(): bool
-    {
-        return !empty($this->staticSpecs) || !empty($this->dynamicSpecs);
+        }
+        return ['staticRoutes' => $staticRoutes, 'dynamicRoutes' => $dynamicRoutes];
     }
 
     /**
-     * Get all registered routes (for documentation or OpenAPI).
-     *
-     * @return array{method:string, rawPath:string, handlerSpec:array}[]
+     * Get all registered routes (for OpenAPI, etc).
+     * @return array
      */
     public function getRoutes(): array
     {
-        $list = [];
-        foreach ($this->staticSpecs as $m => $routes) {
-            foreach ($routes as $path => $spec) {
-                $list[] = (object) ['method' => $m, 'rawPath' => $path, 'handlerSpec' => $spec];
+        $routes = [];
+
+        // Static
+        foreach ($this->staticRoutes as $method => $byPath) {
+            foreach ($byPath as $path => $plan) {
+                $routes[] = (object) [
+                    'method' => $method,
+                    'rawPath' => $path,
+                    'handlerSpec' => [$plan['controller'], $plan['method']],
+                    // You may add more as needed (formatter, etc)
+                ];
             }
         }
-        foreach ($this->dynamicSpecs as $m => $entries) {
-            foreach ($entries as $e) {
-                $list[] = (object) ['method' => $m, 'rawPath' => $e['path'], 'handlerSpec' => $e['spec']];
+
+        // Dynamic
+        foreach ($this->dynamicRoutes as $method => $plans) {
+            foreach ($plans as $plan) {
+                $routes[] = (object) [
+                    'method' => $method,
+                    'rawPath' => $plan['path'],
+                    'handlerSpec' => [$plan['controller'], $plan['method']],
+                    // You may add more as needed (formatter, regex, etc)
+                ];
             }
         }
-        return $list;
+
+        return $routes;
     }
 }
