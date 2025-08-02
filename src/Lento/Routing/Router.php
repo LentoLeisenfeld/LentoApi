@@ -2,13 +2,15 @@
 
 namespace Lento\Routing;
 
+use ReflectionClass;
+use ReflectionProperty;
+
 use Lento\Container;
 use Lento\Http\{Request, Response, View};
 use Lento\Validation\Validator;
 use Lento\Exceptions\ValidationException;
-use ReflectionClass;
 use Lento\Cache;
-use Lento\Routing\Attributes\{Inject, Body, Param, Query, Controller as ControllerAttr};
+use Lento\Routing\Attributes\{Inject, Body, Param, Query, Controller};
 use Lento\Formatter\Attributes\{FileFormatter, JSONFormatter, SimpleXmlFormatter};
 
 class Router
@@ -56,7 +58,7 @@ class Router
         }
 
         if (!Cache::isAvailable($controllers)) {
-            // ---- COLD BOOT ----
+            #region COLD BOOT
             $plans = self::compileRoutePlans($controllers);
 
             foreach ($plans['staticRoutes'] as $method => $routes) {
@@ -71,7 +73,7 @@ class Router
             }
             Cache::storeFromRouter($router, $controllers, $serviceClasses);
         } else {
-            // ---- WARM BOOT ----
+            #region Warm Boot
             Cache::loadToRouter($router);
         }
         return $router;
@@ -80,22 +82,40 @@ class Router
     public function dispatch(string $uri, string $httpMethod, Request $req, Response $res)
     {
         $path = '/' . ltrim(rtrim($uri, '/'), '/');
+
+        $publicPath = Cache::getPublicDirectory();
+        $filePath = realpath($publicPath . $path);
+
+        // try static files
+        if ($filePath && str_starts_with($filePath, realpath($publicPath)) && is_file($filePath)) {
+            $mime = mime_content_type($filePath) ?: 'application/octet-stream';
+            $res->withHeader('Content-Type', $mime)
+                ->write(file_get_contents($filePath))
+                ->send();
+            return;
+        }
+
+        // try static routes
         $m = strtoupper($httpMethod);
         $route = $this->staticRoutes[$m][$path] ?? null;
         $params = [];
 
+        // try dynamic routes
         if (!$route) {
             foreach ($this->dynamicRoutes[$m] ?? [] as $entry) {
                 if (preg_match($entry['regex'], $path, $matches)) {
-                    foreach ($matches as $k => $v)
-                        if (is_string($k))
-                            $params[$k] = $v;
+                    foreach ($matches as $key => $value) {
+                        if (is_string($key)) {
+                            $params[$key] = $value;
+                        }
+                    }
                     $route = $entry;
                     break;
                 }
             }
         }
 
+        // no route found
         if (!$route) {
             return $res->status(404)
                 ->withHeader('Content-Type', 'application/json')
@@ -110,7 +130,7 @@ class Router
         foreach ($route['propInject'] as $p) {
             $propName = $p['name'];
             $type = $p['type'];
-            $refProp = new \ReflectionProperty($class, $propName);
+            $refProp = new ReflectionProperty($class, $propName);
             $refProp->setAccessible(true);
 
             if ($type === Request::class) {
@@ -163,14 +183,14 @@ class Router
         $method = $route['method'];
         $result = $controller->$method(...$args);
 
-        // -------- HTML VIEW RENDERING ---------
+        #region HTML VIEW RENDERING
         if ($result instanceof View) {
             $res->withHeader('Content-Type', 'text/html');
             $res->write($result->render())->send();
             return;
         }
 
-        // -------- FORMATTER HANDLING ---------
+        #region FORMATTER HANDLING
         $formatter = $route['formatter'] ?? ['type' => 'json', 'options' => null];
         if (is_array($formatter) && isset($formatter['type'])) {
             switch ($formatter['type']) {
@@ -210,7 +230,7 @@ class Router
             }
         }
 
-        // --- DEFAULT: JSON ---
+        #region DEFAULT: JSON
         $res->withHeader('Content-Type', 'application/json')
             ->write(json_encode($result))
             ->send();
@@ -228,7 +248,7 @@ class Router
             $rc = new ReflectionClass($controller);
 
             $prefix = '';
-            foreach ($rc->getAttributes(ControllerAttr::class) as $attr) {
+            foreach ($rc->getAttributes(Controller::class) as $attr) {
                 $cp = $attr->newInstance()->getPath();
                 $prefix = $cp !== '' ? '/' . trim($cp, '/') : '';
                 break;
@@ -272,7 +292,12 @@ class Router
 
                 $argPlan = [];
                 foreach ($method->getParameters() as $param) {
-                    $type = $param->getType()?->getName();
+                    $type = match (true) {
+                        is_null($param->getType()) => null,
+                        method_exists($param->getType(), 'getName') => $param->getType()->getName(),
+                        default => null,
+                    };
+
                     $bodyAttr = $param->getAttributes(Body::class)[0] ?? null;
                     $queryAttr = $param->getAttributes(Query::class)[0] ?? null;
                     $routeAttrP = $param->getAttributes(Param::class)[0] ?? null;
@@ -364,5 +389,56 @@ class Router
         }
 
         return $routes;
+    }
+
+    static function exportAllAttributes(array $controllers): array
+    {
+        $result = [];
+        foreach ($controllers as $className) {
+            if (!class_exists($className))
+                continue;
+            $rc = new ReflectionClass($className);
+
+            // Class-level attributes
+            $result[$className]['__class'] = array_map(
+                fn($attr) => [
+                    'name' => $attr->getName(),
+                    'args' => $attr->getArguments(),
+                ],
+                $rc->getAttributes()
+            );
+
+            // Property attributes
+            foreach ($rc->getProperties() as $prop) {
+                $result[$className]['properties'][$prop->getName()] = array_map(
+                    fn($attr) => [
+                        'name' => $attr->getName(),
+                        'args' => $attr->getArguments(),
+                    ],
+                    $prop->getAttributes()
+                );
+            }
+
+            // Method and parameter attributes
+            foreach ($rc->getMethods() as $method) {
+                $result[$className]['methods'][$method->getName()]['__method'] = array_map(
+                    fn($attr) => [
+                        'name' => $attr->getName(),
+                        'args' => $attr->getArguments(),
+                    ],
+                    $method->getAttributes()
+                );
+                foreach ($method->getParameters() as $param) {
+                    $result[$className]['methods'][$method->getName()]['parameters'][$param->getName()] = array_map(
+                        fn($attr) => [
+                            'name' => $attr->getName(),
+                            'args' => $attr->getArguments(),
+                        ],
+                        $param->getAttributes()
+                    );
+                }
+            }
+        }
+        return $result;
     }
 }

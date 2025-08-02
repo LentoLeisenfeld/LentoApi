@@ -2,7 +2,9 @@
 
 namespace Lento;
 
+use ReflectionClass;
 use Lento\Routing\Router;
+use RuntimeException;
 
 /**
  * High-performance cache for boot-time precompilation and attribute discovery.
@@ -13,31 +15,44 @@ class Cache
     private const META_FILE = 'meta.php';
     private const ATTRIBUTES_FILE = 'attributes.php';
 
-    public static ?string $directory = null;
+    public static ?string $public_directory = null;
+    public static ?string $cache_directory = null;
 
-    public static function configure(string $directory): void
+    public static function setCacheDirectory(string $directory): self
     {
-        self::$directory = rtrim($directory, '/\\');
+        self::$cache_directory = rtrim($directory, '/\\');
+
+        return new self();
+    }
+    public static function setPublicDirectory(string $directory): self
+    {
+        self::$public_directory = rtrim($directory, '/\\');
+
+        return new self();
     }
 
-    public static function getDirectory(): string
+    public static function getCacheDirectory(): string
     {
-        return self::$directory ?: (sys_get_temp_dir() . '/lentocache');
+        return self::$cache_directory ?: (sys_get_temp_dir() . '/lentocache');
+    }
+    public static function getPublicDirectory(): string
+    {
+        return self::$public_directory ?: throw new RuntimeException("ToDo: error message");
     }
 
     public static function getRouteFile(): string
     {
-        return self::getDirectory() . '/' . self::ROUTES_FILE;
+        return self::getCacheDirectory() . '/' . self::ROUTES_FILE;
     }
 
     public static function getMetaFile(): string
     {
-        return self::getDirectory() . '/' . self::META_FILE;
+        return self::getCacheDirectory() . '/' . self::META_FILE;
     }
 
     public static function getAttributesFile(): string
     {
-        return self::getDirectory() . '/' . self::ATTRIBUTES_FILE;
+        return self::getCacheDirectory() . '/' . self::ATTRIBUTES_FILE;
     }
 
     public static function isAvailable(array $controllers): bool
@@ -58,13 +73,19 @@ class Cache
         }
 
         foreach ($controllers as $controller) {
-            if (!class_exists($controller)) continue;
-            $rc = new \ReflectionClass($controller);
+            if (!class_exists($controller)) {
+                continue;
+            }
+
+            $rc = new ReflectionClass($controller);
             $file = $rc->getFileName();
+
             if (!$file || !file_exists($file)) {
                 return false;
             }
+
             $mtime = filemtime($file);
+
             if (!isset($storedMeta[$file]) || $storedMeta[$file] !== $mtime) {
                 return false;
             }
@@ -74,7 +95,7 @@ class Cache
 
     public static function storeFromRouter(Router $router, array $controllers, array $serviceClasses): void
     {
-        $dir = self::getDirectory();
+        $dir = self::getCacheDirectory();
         if (!is_dir($dir)) {
             mkdir($dir, 0777, true);
         }
@@ -86,8 +107,9 @@ class Cache
 
         $meta = [];
         foreach ($controllers as $controller) {
-            if (!class_exists($controller)) continue;
-            $rc = new \ReflectionClass($controller);
+            if (!class_exists($controller))
+                continue;
+            $rc = new ReflectionClass($controller);
             $file = $rc->getFileName();
             if ($file && file_exists($file)) {
                 $meta[$file] = filemtime($file);
@@ -100,9 +122,12 @@ class Cache
 
     public static function storeAttributes(array $controllers): void
     {
-        $dir = self::getDirectory();
-        if (!is_dir($dir)) mkdir($dir, 0777, true);
-        $attributes = \Lento\exportAllAttributes($controllers);
+        $dir = self::getCacheDirectory();
+        if (!is_dir($dir)) {
+            mkdir($dir, 0777, true);
+        }
+
+        $attributes = Router::exportAllAttributes($controllers);
 
         $header = "<?php\n// AUTO-GENERATED FILE - DO NOT EDIT\n\n";
         file_put_contents($dir . '/' . self::ATTRIBUTES_FILE, $header . 'return ' . var_export($attributes, true) . ';');
@@ -111,7 +136,10 @@ class Cache
     public static function loadAttributes(): array
     {
         $file = self::getAttributesFile();
-        if (!file_exists($file)) return [];
+        if (!file_exists($file)) {
+            return [];
+        }
+
         return require $file;
     }
 
@@ -123,60 +151,5 @@ class Cache
         }
         $data = require $routeFile;
         $router->importCompiledPlans($data);
-    }
-}
-
-/**
- * Utility to extract all attributes (with args) per class, method, property, and parameter.
- */
-if (!function_exists('Lento\\exportAllAttributes')) {
-    function exportAllAttributes(array $controllers): array
-    {
-        $result = [];
-        foreach ($controllers as $className) {
-            if (!class_exists($className)) continue;
-            $rc = new \ReflectionClass($className);
-
-            // Class-level attributes
-            $result[$className]['__class'] = array_map(
-                fn($attr) => [
-                    'name' => $attr->getName(),
-                    'args' => $attr->getArguments(),
-                ],
-                $rc->getAttributes()
-            );
-
-            // Property attributes
-            foreach ($rc->getProperties() as $prop) {
-                $result[$className]['properties'][$prop->getName()] = array_map(
-                    fn($attr) => [
-                        'name' => $attr->getName(),
-                        'args' => $attr->getArguments(),
-                    ],
-                    $prop->getAttributes()
-                );
-            }
-
-            // Method and parameter attributes
-            foreach ($rc->getMethods() as $method) {
-                $result[$className]['methods'][$method->getName()]['__method'] = array_map(
-                    fn($attr) => [
-                        'name' => $attr->getName(),
-                        'args' => $attr->getArguments(),
-                    ],
-                    $method->getAttributes()
-                );
-                foreach ($method->getParameters() as $param) {
-                    $result[$className]['methods'][$method->getName()]['parameters'][$param->getName()] = array_map(
-                        fn($attr) => [
-                            'name' => $attr->getName(),
-                            'args' => $attr->getArguments(),
-                        ],
-                        $param->getAttributes()
-                    );
-                }
-            }
-        }
-        return $result;
     }
 }
