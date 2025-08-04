@@ -28,8 +28,7 @@
   },
   "require-dev": {
     "monolog/monolog": "^3.9",
-    "psr/log": "^3.0",
-    "code-lts/doctum": "^5.5"
+    "psr/log": "^3.0"
   },
   "suggest": {
     "illuminate/database": "Enable \\Lento\\ORM::configure() and Eloquent ORM support",
