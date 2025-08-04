@@ -26,13 +26,15 @@ class OpenAPIController
     #[Inject]
     protected Router $router;
 
+    const docname = 'documentation';
+
     /**
      * Undocumented function
      *
      * @return string
      */
-    #[Get('/documentation')]
-    #[FileFormatter(filename: 'documentation.html', mimetype: 'text/html', download: false)]
+    #[Get('/' . self::docname)]
+    #[FileFormatter(filename: self::docname . '.html', mimetype: 'text/html', download: false)]
     public function index(): string
     {
         $filename = 'swagger.html';

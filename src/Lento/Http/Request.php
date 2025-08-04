@@ -50,6 +50,13 @@ class Request
     public mixed $jwt = null;
 
     /**
+     * True if the client accepts a partial response (AJAX navigation)
+     *
+     * @var bool
+     */
+    public bool $acceptPartial = false;
+
+    /**
      * Undocumented function
      */
     private function __construct()
@@ -83,6 +90,11 @@ class Request
         if (isset($_SERVER['AUTHORIZATION'])) {
             $req->headers['Authorization'] = $_SERVER['AUTHORIZATION'];
         }
+        $headersLower = array_change_key_case($req->headers, CASE_LOWER);
+        $req->acceptPartial = (
+            isset($headersLower['x-lento-accept']) &&
+            strtolower($headersLower['x-lento-accept']) === 'partial'
+        );
 
         $req->query = $_GET;
 

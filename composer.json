@@ -1,5 +1,5 @@
 {
-  "name": "lento/api",
+  "name": "systonia/lento",
   "description": "A lightweight modular API framework for PHP, bundling routing, middleware, CORS, logging, and Eloquent ORM.",
   "keywords": [
     "php",
@@ -28,7 +28,8 @@
   },
   "require-dev": {
     "monolog/monolog": "^3.9",
-    "psr/log": "^3.0"
+    "psr/log": "^3.0",
+    "code-lts/doctum": "^5.5"
   },
   "suggest": {
     "illuminate/database": "Enable \\Lento\\ORM::configure() and Eloquent ORM support",

@@ -6,6 +6,7 @@ use ReflectionClass;
 use ReflectionProperty;
 
 use Lento\Container;
+use Lento\Logging\Logger;
 use Lento\Http\{Request, Response, View};
 use Lento\Validation\Validator;
 use Lento\Exceptions\ValidationException;
@@ -258,6 +259,7 @@ class Router
                 $routeAttr = null;
                 $formatterAttr = null;
                 foreach ($method->getAttributes() as $attr) {
+                    Logger::info($attr);
                     $instance = $attr->newInstance();
                     if (method_exists($instance, 'getPath') && method_exists($instance, 'getHttpMethod')) {
                         $routeAttr = $instance;

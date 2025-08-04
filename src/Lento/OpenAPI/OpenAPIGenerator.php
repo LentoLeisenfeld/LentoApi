@@ -50,22 +50,25 @@ class OpenAPIGenerator
 
         foreach ($this->router->getRoutes() as $route) {
             $handlerSpec = $this->getHandlerSpec($route);
-            if (!$handlerSpec)
+            if (!$handlerSpec) {
                 continue;
+            }
 
             [$controllerClass, $methodName] = $handlerSpec;
 
             $methodRef = is_object($route) ? ($route->method ?? null) : ($route['method'] ?? null);
             $rawPath = is_object($route) ? ($route->rawPath ?? null) : ($route['rawPath'] ?? null);
-            if (!$methodRef || !$rawPath)
+            if (!$methodRef || !$rawPath) {
                 continue;
+            }
 
             // Use attribute cache instead of reflection
             $classAttrs = $this->attributeCache[$controllerClass]['__class'] ?? [];
             $methodAttrs = $this->attributeCache[$controllerClass]['methods'][$methodName]['__method'] ?? [];
 
-            if ($this->isIgnored($classAttrs, $methodAttrs))
+            if ($this->isIgnored($classAttrs, $methodAttrs)) {
                 continue;
+            }
 
             $httpMethod = strtolower($methodRef);
 
@@ -108,6 +111,7 @@ class OpenAPIGenerator
     {
         foreach (array_merge($classAttrs, $methodAttrs) as $attr) {
             if (($attr['name'] ?? null) === \Lento\OpenAPI\Attributes\Ignore::class) {
+                Logger::info("ignored");
                 return true;
             }
         }
